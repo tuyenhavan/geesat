@@ -1,0 +1,8 @@
+# ignore the following files and directories
+*.log
+tests/
+data/
+notebooks/00_test_notebook.ipynb
+.vscode/
+__pycache__/
+*.pyc
