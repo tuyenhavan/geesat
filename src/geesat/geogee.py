@@ -1,6 +1,8 @@
 import ee
 from geesat import common
 import pandas as pd
+import geopandas as gpd
+from datetime import datetime, timedelta
 
 
 ################################## Vegetation Indices ##################################
@@ -675,7 +677,9 @@ def extract_raster_values_by_polygon(ds, aoi, aggregate_method="mean", scale=100
     return data
 
 
-def extract_raster_values_from_collection_by_polygons(col, polygon, scale=1000):
+def extract_raster_values_from_collection_by_polygons(
+    col, polygon, scale=1000, aggregate_method="mean"
+):
     """
     Extracts mean raster values from an Earth Engine ImageCollection over a polygon FeatureCollection
     and returns the results as a pandas DataFrame.
@@ -722,6 +726,16 @@ def extract_raster_values_from_collection_by_polygons(col, polygon, scale=1000):
             raise TypeError(
                 "Unsupported data type. It only supports ee.FeatureCollection or geopandas dataframe"
             ) from e
+    if aggregate_method.lower() in ["max", "maximum"]:
+        method = ee.Reducer.max()
+    elif aggregate_method.lower() in ["min", "minimum"]:
+        method = ee.Reducer.min()
+    elif aggregate_method.lower() in ["total", "sum"]:
+        method = ee.Reducer.sum()
+    elif aggregate_method.lower() in ["median"]:
+        method = ee.Reducer.median()
+    else:
+        method = ee.Reducer.mean()
 
     # Function to extract raster values from a collection by polygons
     def extract_values(image):
@@ -729,7 +743,7 @@ def extract_raster_values_from_collection_by_polygons(col, polygon, scale=1000):
         date = image.date().format("YYYY-MM-dd")
         # Reduce the image by the polygons
         stats = image.reduceRegions(
-            collection=polygon, reducer=ee.Reducer.mean(), scale=scale
+            collection=polygon, reducer=method, scale=scale
         ).map(lambda feature: feature.set("date", date))
         return stats
 
@@ -756,9 +770,6 @@ def extract_raster_values_by_point(
     Returns:
         pd.DataFrame: DataFrame containing extracted raster values and timestamps.
     """
-    from datetime import datetime
-
-    import geopandas as gpd
 
     if not isinstance(points, gpd.GeoDataFrame):
         raise TypeError("points must be a GeoDataFrame")

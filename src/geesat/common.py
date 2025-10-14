@@ -136,7 +136,7 @@ def yearly_date_list(start_year, start_month, start_day, number_of_year=10):
     return year_list
 
 
-def gdf_to_ee(gdf: gpd.GeoDataFrame) -> ee.FeatureCollection:
+def gdf_to_ee(gdf: gpd.GeoDataFrame):
     """
     Convert a GeoPandas GeoDataFrame to an Earth Engine FeatureCollection.
 
