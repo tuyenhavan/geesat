@@ -6,32 +6,38 @@ from datetime import datetime, timedelta
 
 
 ################################## Vegetation Indices ##################################
-def calculate_ndvi(image, nir_band="B8", red_band="B4"):
+def calculate_ndvi(data, nir_band="B8", red_band="B4"):
     """Calculate NDVI from an image or an ImageCollection.
 
     Args:
-        image (ee.Image|ee.ImageCollection): The input image or ImageCollection.
+        data (ee.Image|ee.ImageCollection): The input image or ImageCollection.
         nir_band (str, optional): The name of the NIR band. Defaults to "B8".
         red_band (str, optional): The name of the red band. Defaults to "B4".
     """
-    if isinstance(image, ee.ImageCollection):
-        ndvi = image.map(
+    if isinstance(data, ee.ImageCollection):
+        ndvi = data.map(
             lambda img: img.expression(
                 "(NIR - RED) / (NIR + RED)",
                 {
                     "NIR": img.select(nir_band),
                     "RED": img.select(red_band),
                 },
-            ).rename("NDVI")
+            )
+            .rename("NDVI")
+            .copyProperties(img, ["system:time_start"])
         )
-    elif isinstance(image, ee.Image):
-        ndvi = image.expression(
-            "(NIR - RED) / (NIR + RED)",
-            {
-                "NIR": image.select(nir_band),
-                "RED": image.select(red_band),
-            },
-        ).rename("NDVI")
+    elif isinstance(data, ee.Image):
+        ndvi = (
+            data.expression(
+                "(NIR - RED) / (NIR + RED)",
+                {
+                    "NIR": data.select(nir_band),
+                    "RED": data.select(red_band),
+                },
+            )
+            .rename("NDVI")
+            .copyProperties(data, data.propertyNames())
+        )
     else:
         raise TypeError(
             "Unsupported data type. It only supports ee.Image or ee.ImageCollection"
@@ -39,11 +45,11 @@ def calculate_ndvi(image, nir_band="B8", red_band="B4"):
     return ndvi
 
 
-def calculate_evi(image, nir_band="B8", red_band="B4", blue_band="B2"):
+def calculate_evi(data, nir_band="B8", red_band="B4", blue_band="B2"):
     """Calculate EVI from an image or an ImageCollection.
 
     Args:
-        image (ee.Image|ee.ImageCollection): The input image or ImageCollection.
+        data (ee.Image|ee.ImageCollection): The input image or ImageCollection.
         nir_band (str, optional): The name of the NIR band. Defaults to "B8".
         red_band (str, optional): The name of the red band. Defaults to "B4".
         blue_band (str, optional): The name of the blue band. Defaults to "B2".
@@ -51,8 +57,8 @@ def calculate_evi(image, nir_band="B8", red_band="B4", blue_band="B2"):
     Returns:
         ee.Image|ee.ImageCollection: The NDVI image or ImageCollection.
     """
-    if isinstance(image, ee.ImageCollection):
-        evi = image.map(
+    if isinstance(data, ee.ImageCollection):
+        evi = data.map(
             lambda img: img.expression(
                 "2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))",
                 {
@@ -60,17 +66,23 @@ def calculate_evi(image, nir_band="B8", red_band="B4", blue_band="B2"):
                     "RED": img.select(red_band),
                     "BLUE": img.select(blue_band),
                 },
-            ).rename("EVI")
+            )
+            .rename("EVI")
+            .copyProperties(img, ["system:time_start"])
         )
-    elif isinstance(image, ee.Image):
-        evi = image.expression(
-            "2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))",
-            {
-                "NIR": image.select(nir_band),
-                "RED": image.select(red_band),
-                "BLUE": image.select(blue_band),
-            },
-        ).rename("EVI")
+    elif isinstance(data, ee.Image):
+        evi = (
+            data.expression(
+                "2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))",
+                {
+                    "NIR": data.select(nir_band),
+                    "RED": data.select(red_band),
+                    "BLUE": data.select(blue_band),
+                },
+            )
+            .rename("EVI")
+            .copyProperties(data, data.propertyNames())
+        )
     else:
         raise TypeError(
             "Unsupported data type. It only supports ee.Image or ee.ImageCollection"
@@ -78,35 +90,41 @@ def calculate_evi(image, nir_band="B8", red_band="B4", blue_band="B2"):
     return evi
 
 
-def calculate_ndwi(image, nir_band="B8", swir_band="B11"):
+def calculate_ndwi(data, nir_band="B8", swir_band="B11"):
     """Calculate NDWI from an image or an ImageCollection.
 
     Args:
-        image (ee.Image|ee.ImageCollection): The input image or ImageCollection.
+        data (ee.Image|ee.ImageCollection): The input image or ImageCollection.
         nir_band (str, optional): The name of the NIR band. Defaults to "B8".
         swir_band (str, optional): The name of the SWIR band. Defaults to "B11".
 
     Returns:
         ee.Image|ee.ImageCollection: The NDWI image or ImageCollection.
     """
-    if isinstance(image, ee.ImageCollection):
-        ndwi = image.map(
+    if isinstance(data, ee.ImageCollection):
+        ndwi = data.map(
             lambda img: img.expression(
                 "(NIR - SWIR) / (NIR + SWIR)",
                 {
                     "NIR": img.select(nir_band),
                     "SWIR": img.select(swir_band),
                 },
-            ).rename("NDWI")
+            )
+            .rename("NDWI")
+            .copyProperties(img, ["system:time_start"])
         )
-    elif isinstance(image, ee.Image):
-        ndwi = image.expression(
-            "(NIR - SWIR) / (NIR + SWIR)",
-            {
-                "NIR": image.select(nir_band),
-                "SWIR": image.select(swir_band),
-            },
-        ).rename("NDWI")
+    elif isinstance(data, ee.Image):
+        ndwi = (
+            data.expression(
+                "(NIR - SWIR) / (NIR + SWIR)",
+                {
+                    "NIR": data.select(nir_band),
+                    "SWIR": data.select(swir_band),
+                },
+            )
+            .rename("NDWI")
+            .copyProperties(data, data.propertyNames())
+        )
     else:
         raise TypeError(
             "Unsupported data type. It only supports ee.Image or ee.ImageCollection"
@@ -114,11 +132,11 @@ def calculate_ndwi(image, nir_band="B8", swir_band="B11"):
     return ndwi
 
 
-def calculate_savi(image, nir_band="B8", red_band="B4", L=0.5):
+def calculate_savi(data, nir_band="B8", red_band="B4", L=0.5):
     """Calculate SAVI from an image or an ImageCollection.
 
     Args:
-        image (ee.Image|ee.ImageCollection): The input image or ImageCollection.
+        data (ee.Image|ee.ImageCollection): The input image or ImageCollection.
         nir_band (str, optional): The name of the NIR band. Defaults to "B8".
         red_band (str, optional): The name of the red band. Defaults to "B4".
         L (float, optional): The soil brightness correction factor. Defaults to 0.5.
@@ -126,8 +144,8 @@ def calculate_savi(image, nir_band="B8", red_band="B4", L=0.5):
     Returns:
         ee.Image|ee.ImageCollection: The SAVI image or ImageCollection.
     """
-    if isinstance(image, ee.ImageCollection):
-        savi = image.map(
+    if isinstance(data, ee.ImageCollection):
+        savi = data.map(
             lambda img: img.expression(
                 "(NIR - RED) / (NIR + RED + L) * (1 + L)",
                 {
@@ -135,17 +153,23 @@ def calculate_savi(image, nir_band="B8", red_band="B4", L=0.5):
                     "RED": img.select(red_band),
                     "L": L,
                 },
-            ).rename("SAVI")
+            )
+            .rename("SAVI")
+            .copyProperties(img, ["system:time_start"])
         )
-    elif isinstance(image, ee.Image):
-        savi = image.expression(
-            "(NIR - RED) / (NIR + RED + L) * (1 + L)",
-            {
-                "NIR": image.select(nir_band),
-                "RED": image.select(red_band),
-                "L": L,
-            },
-        ).rename("SAVI")
+    elif isinstance(data, ee.Image):
+        savi = (
+            data.expression(
+                "(NIR - RED) / (NIR + RED + L) * (1 + L)",
+                {
+                    "NIR": data.select(nir_band),
+                    "RED": data.select(red_band),
+                    "L": L,
+                },
+            )
+            .rename("SAVI")
+            .copyProperties(data, data.propertyNames())
+        )
     else:
         raise TypeError(
             "Unsupported data type. It only supports ee.Image or ee.ImageCollection"
@@ -169,17 +193,17 @@ def calculate_sen1_indices(col):
         ).rename("RVI")
         # vh/vv ratio
         vh_vv_ratio = img.select("VH").divide(img.select("VV")).rename("VH_VV_Ratio")
-        return img.addBands([rvi, vh_vv_ratio])
+        return img.addBands([rvi, vh_vv_ratio]).copyProperties(
+            img, ["system:time_start"]
+        )
 
     return col.map(add_indices)
 
 
-def calculate_landsat_indices(
-    filter_bound, start_date="2020-10-01", end_date="2023-12-31"
-):
-    """Calculate Landsat indices for a given date range and bounding area.
+def calculate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31"):
+    """Calculate Landsat (8-9) indices for a given date range and bounding area.
     Args:
-        filter_bound (ee.Geometry): The bounding area to filter the Landsat collection.
+        aoi (ee.Geometry|ee.FeatureCollection|gpd.GeoDataFrame): The bounding area to filter the Landsat collection.
         start_date (str): Start date for filtering the Landsat collection in 'YYYY-MM-DD' format.
         end_date (str): End date for filtering the Landsat collection in 'YYYY-MM-DD' format.
     Returns:
@@ -187,16 +211,16 @@ def calculate_landsat_indices(
     """
     import geopandas as gpd
 
-    if isinstance(filter_bound, gpd.GeoDataFrame):
-        filter_bound = common.gdf_to_ee(filter_bound)
+    if isinstance(aoi, gpd.GeoDataFrame):
+        aoi = common.gdf_to_ee(aoi)
     ls9 = (
         ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
-        .filterBounds(filter_bound)
+        .filterBounds(aoi)
         .filterDate(start_date, end_date)
     )
     ls8 = (
         ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
-        .filterBounds(filter_bound)
+        .filterBounds(aoi)
         .filterDate(start_date, end_date)
     )
 
@@ -501,7 +525,7 @@ def sen2_cloud_mask(
     return fcol
 
 
-################################## Unit Conversion ##################################
+################################## Unit Conversion and datetime ##################################
 
 
 def convert_landsat_lst_to_celsius(collection, roi=None, band="ST_10"):
@@ -641,6 +665,74 @@ def resample_collection(col, resample_method=None, scale=None, crs=None):
     else:
         raise TypeError("Unsupported data type!")
     return data
+
+
+def date_range_col(col):
+    """Return the first and latest datetimes of image acquision in the collection
+
+    Args:
+        col (ee.ImageCollection): The input image collection.
+
+    Returns:
+        tuple: The ee.Date object
+    """
+    first_date = ee.Date(col.first().get("system:time_start"))
+    latest_date = ee.Date(
+        col.limit(1, "system:time_start", False).first().get("system:time_start")
+    )
+    return first_date, latest_date
+
+
+def monthly_datetime_list(first_date, latest_date):
+    """Return a list of monthly datetime objects.
+
+    Args:
+        first_date(ee.date): The first date of collection.
+        latest_date(ee.Date): The latest date of collection.
+
+    Returns:
+        ee.List: The list of monthly datetime objects.
+    """
+    m = ee.Number.parse(first_date.format("MM"))
+    y = ee.Number.parse(first_date.format("YYYY"))
+    month_count = latest_date.difference(first_date, "month").round()
+    month_list = ee.List.sequence(0, month_count)
+
+    def month_step(month):
+        first_month = ee.Date.fromYMD(y, m, 1)
+        next_month = first_month.advance(month, "month")
+        return next_month.millis()
+
+    monthly_list = month_list.map(month_step)
+    return monthly_list
+
+
+def adjust_date_col(ds):
+    """Adjust the date one day before or after the original date. In some cases, dates of two
+    collections are the same and make analysis challenging
+
+        Args:
+            ds (ee.ImageCollection): The image collection
+
+        Returns:
+            ee.ImageCollection: The collection with adjusted dates.
+    """
+
+    def adjust_date(img):
+        start = img.date()
+        end1 = start.advance(1, "day")
+        end2 = start.advance(-1, "day")
+        m1 = ee.Number.parse(start.format("MM"))
+        m2 = ee.Number.parse(end1.format("MM"))
+        new_img = ds.filterDate(start, end1).first()
+        return ee.Algorithms.If(
+            m1.eq(m2),
+            new_img.set({"system:time_start": end1.millis()}),
+            new_img.set({"system:time_start": end2.millis()}),
+        )
+
+    fin_col = ee.ImageCollection(ds.map(adjust_date))
+    return fin_col
 
 
 ################################ Extract Raster Values ##################################
@@ -791,6 +883,230 @@ def extract_raster_values_by_point(
     if keep_date:
         df["time"] = pd.to_datetime(df["time"]).dt.date
     return df
+
+
+##################################### Processing #####################################
+def monthly_composite(col, mode=None):
+    """Return a collection of monthly images
+
+    Args:
+        col (ee.ImageCollection): The input image collection.
+        mode (str): The aggregated method. Supported modes 'max', 'min',
+                    'median', 'mean', 'sum'. Default to None.
+
+    Returns:
+        ee.ImageCollection: A output image collection of monthly images.
+    """
+    if not isinstance(col, ee.ImageCollection):
+        raise TypeError("Unsupported data type. Expected data is ee.ImageCollection")
+    if not isinstance(mode, (str, type(None))):
+        raise TypeError("Unsupported data type. Mode should be string")
+    if mode is None:
+        mode = "max"
+    mode = mode.lower().strip()
+    if mode not in ["max", "mean", "median", "mvc", "min", "sum"]:
+        raise ValueError(
+            "Unsupported methods. Please choose mean, max, min, sum, or median"
+        )
+
+    first_date, latest_date = date_range_col(col)
+    monthly_list = monthly_datetime_list(first_date, latest_date)
+
+    def monthly_data(date):
+        start_date = ee.Date(date)
+        end_date = start_date.advance(1, "month")
+        monthly_col = col.filterDate(start_date, end_date)
+        size = monthly_col.size()
+
+        if mode == "mean":
+            img = monthly_col.mean().set({"system:time_start": start_date.millis()})
+        elif mode == "max":
+            img = monthly_col.max().set({"system:time_start": start_date.millis()})
+        elif mode == "min":
+            img = monthly_col.min().set({"system:time_start": start_date.millis()})
+        elif mode in ["median", "mvc"]:
+            img = monthly_col.median().set({"system:time_start": start_date.millis()})
+        else:
+            img = monthly_col.sum().set({"system:time_start": start_date.millis()})
+        return ee.Algorithms.If(size.gt(0), img)
+
+    composite_col = ee.ImageCollection.fromImages(monthly_list.map(monthly_data))
+    return composite_col
+
+
+def daily_composite(ds, mode="max"):
+    """Aggregate data from hourly to daily composites
+
+    Args:
+        ds (ImageCollection): The input image collection.
+        mode (str|optional): Aggregated modes [max, min, mean, median, sum]. Default to max.
+
+    Return:
+        ImageCollection: The daily composite
+    """
+    if isinstance(mode, str):
+        mode = mode.lower().strip()
+
+    # Get the starting and ending dates of the collection
+    start_date = ee.Date(
+        ee.Date(ds.first().get("system:time_start")).format("YYYY-MM-dd")
+    )
+    end_date = ee.Date(
+        ee.Date(
+            ds.sort("system:time_start", False).first().get("system:time_start")
+        ).format("YYYY-MM-dd")
+    )
+
+    # Get the number of days
+    daynum = end_date.difference(start_date, "day")
+    slist = ee.List.sequence(0, daynum)
+    date_list = slist.map(lambda i: start_date.advance(i, "day"))
+
+    def sub_col(date_input):
+        first_date = ee.Date(date_input)
+        last_date = first_date.advance(1, "day")
+        subcol = ds.filterDate(first_date, last_date)
+        size = subcol.size()
+
+        if mode in ["max", "maximum"]:
+            img = subcol.max().set({"system:time_start": first_date.millis()})
+        elif mode in ["mean", "average"]:
+            img = subcol.mean().set({"system:time_start": first_date.millis()})
+        elif mode in ["min", "minimum"]:
+            img = subcol.min().set({"system:time_start": first_date.millis()})
+        elif mode in ["median"]:
+            img = subcol.median().set({"system:time_start": first_date.millis()})
+        elif mode in ["sum", "total"]:
+            img = subcol.sum().set({"system:time_start": first_date.millis()})
+
+        return ee.Algorithms.If(size.gt(0), img)
+
+    new_col = ee.ImageCollection.fromImages(date_list.map(sub_col))
+    return new_col
+
+
+def weekly_composite(ds, mode="max"):
+    """Aggregate data from daily/hourly to weekly composites
+
+    Args:
+        ds (ImageCollection): The input image collection.
+        mode (str|optional): Aggregation mode [max, min, mean, median, sum]. Defaults to "max".
+
+    Returns:
+        ImageCollection: The weekly composite.
+    """
+    if isinstance(mode, str):
+        mode = mode.lower().strip()
+
+    # Get the starting and ending dates
+    start_date = ee.Date(
+        ee.Date(ds.first().get("system:time_start")).format("YYYY-MM-dd")
+    )
+    end_date = ee.Date(
+        ee.Date(
+            ds.sort("system:time_start", False).first().get("system:time_start")
+        ).format("YYYY-MM-dd")
+    )
+
+    # Number of weeks
+    total_days = end_date.difference(start_date, "week").ceil()
+    wlist = ee.List.sequence(0, total_days.subtract(1))
+    week_start_dates = wlist.map(lambda i: start_date.advance(ee.Number(i), "week"))
+
+    def sub_col(date_input):
+        first_date = ee.Date(date_input)
+        last_date = first_date.advance(1, "week")
+        subcol = ds.filterDate(first_date, last_date)
+        size = subcol.size()
+
+        if mode in ["max", "maximum"]:
+            img = subcol.max().set({"system:time_start": first_date.millis()})
+        elif mode in ["mean", "average"]:
+            img = subcol.mean().set({"system:time_start": first_date.millis()})
+        elif mode in ["min", "minimum"]:
+            img = subcol.min().set({"system:time_start": first_date.millis()})
+        elif mode in ["median"]:
+            img = subcol.median().set({"system:time_start": first_date.millis()})
+        elif mode in ["sum", "total"]:
+            img = subcol.sum().set({"system:time_start": first_date.millis()})
+
+        return ee.Algorithms.If(size.gt(0), img)
+
+    new_col = ee.ImageCollection.fromImages(week_start_dates.map(sub_col))
+    return new_col
+
+
+def calculate_ndvi_anomaly(col, scale=1):
+    """Return a collection of monthly vegetation anomaly index.
+
+    Args:
+        col (ee.ImageCollection): The input image collection.
+        scale (int|float|optional): Scaling factor
+
+    Returns:
+        ee.ImageCollection: The output collection with vegetation Anomaly Index (VAI).
+    """
+    if not isinstance(col, ee.ImageCollection):
+        raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")
+    col = common.scaling_data(col, scale)
+
+    first_date, latest_date = date_range_col(col)
+    monthly_list = monthly_datetime_list(first_date, latest_date)
+
+    def ndvi_anomaly(date):
+        start_time = ee.Date(date)
+        set_month = ee.Number.parse(start_time.format("MM"))
+        last_time = start_time.advance(1, "month")
+        col_month = col.filter(ee.Filter.calendarRange(set_month, set_month, "month"))
+        subcol = col.filterDate(start_time, last_time)
+        size = subcol.size()
+        mean = col_month.mean()
+        anomaly = (
+            subcol.max().subtract(mean).set({"system:time_start": start_time.millis()})
+        )
+        return ee.Algorithms.If(size.gt(0), anomaly.rename("VAI"))
+
+    vai = ee.ImageCollection.fromImages(monthly_list.map(ndvi_anomaly))
+    return vai
+
+
+def calculate_vci(col):
+    """Return a collection of vegetation condition index.
+
+    Args:
+        col (ee.ImageCollection): The input image collection.
+        scale (int|float|optional): Scaling factor
+
+    Returns:
+        ee.ImageCollection: The output collection with vegetation Anomaly Index (VAI).
+    """
+    if not isinstance(col, ee.ImageCollection):
+        raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")
+
+    first_date, latest_date = date_range_col(col)
+    monthly_list = monthly_datetime_list(first_date, latest_date)
+
+    def vci(date):
+        start_time = ee.Date(date)
+        set_month = ee.Number.parse(start_time.format("MM"))
+        last_time = start_time.advance(1, "month")
+        col_month = col.filter(ee.Filter.calendarRange(set_month, set_month, "month"))
+        subcol = col.filterDate(start_time, last_time)
+        size = subcol.size()
+        mean = col_month.mean()
+        min_value = col_month.min()
+        max_value = col_month.max()
+        vci_img = (
+            subcol.max()
+            .subtract(min_value)
+            .divide(max_value.subtract(min_value))
+            .multiply(100)
+        )
+        vci_img = vci_img.set({"system:time_start": start_time.millis()}).rename("VCI")
+        return ee.Algorithms.If(size.gt(0), vci_img)
+
+    vci_col = ee.ImageCollection.fromImages(monthly_list.map(vci))
+    return vci_col
 
 
 ################################## Export Data ##################################
