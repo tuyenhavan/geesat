@@ -1,8 +1,10 @@
+from datetime import datetime
+
 import ee
-from geesat import common
-import pandas as pd
 import geopandas as gpd
-from datetime import datetime, timedelta
+import pandas as pd
+
+from geesat import common
 
 
 ################################## Vegetation Indices ##################################
@@ -1036,7 +1038,7 @@ def weekly_composite(ds, mode="max"):
     return new_col
 
 
-def calculate_ndvi_anomaly(col, scale=1):
+def calculate_monthly_anomaly(col, scale=1):
     """Return a collection of monthly vegetation anomaly index.
 
     Args:
@@ -1070,7 +1072,7 @@ def calculate_ndvi_anomaly(col, scale=1):
     return vai
 
 
-def calculate_vci(col):
+def calculate_monthly_vci(col):
     """Return a collection of vegetation condition index.
 
     Args:
@@ -1093,7 +1095,6 @@ def calculate_vci(col):
         col_month = col.filter(ee.Filter.calendarRange(set_month, set_month, "month"))
         subcol = col.filterDate(start_time, last_time)
         size = subcol.size()
-        mean = col_month.mean()
         min_value = col_month.min()
         max_value = col_month.max()
         vci_img = (
@@ -1107,101 +1108,3 @@ def calculate_vci(col):
 
     vci_col = ee.ImageCollection.fromImages(monthly_list.map(vci))
     return vci_col
-
-
-################################## Export Data ##################################
-
-
-def export_img_to_googledrive(
-    ds, aoi, folder_name="GEE_Data", file_name="NDVI_data", res=1000, crs="EPSG:4326"
-):
-    """Export an image from GEE with a given scale and area of interest
-    to the Google Drive. If input data is an ImageCollection, it will convert it
-    into an image and then export. The collection should contains only single data,
-    for example NDVI bands or precipitation bands or LST bands.
-
-        Args:
-            ds (ee.Image|ee.ImageCollection): The input ee.Image or ee.ImageCollection
-            aoi (FeatureCollection): The area of interest to clip the images.
-            folder_name (str): An output file name. Default is GEE_Data
-            res (int): A spatial resolution in meters. Default is 1km.
-            crs (str): A crs of interest. Default to epsg:4326
-
-        Returns:
-            ee.Image: the clipped image with crs: 4326
-    """
-    if isinstance(aoi, (ee.geometry.Geometry, list)):
-        aoi = ee.Geometry.Polygon(aoi)
-    if isinstance(ds, ee.ImageCollection):
-        # Convert it to an image
-        img = ds.toBands()
-        # get bands and rename
-        oldband = img.bandNames().getInfo()
-        newband = ["_".join(i.split("_")[::-1]) for i in oldband]
-        # Rename it
-        new_img = img.select(oldband, newband).clip(aoi)
-    elif isinstance(ds, ee.Image):
-        new_img = ds.clip(aoi)
-    else:
-        raise TypeError("Unsupported data type!")
-    if isinstance(aoi, ee.featurecollection.FeatureCollection):
-        aoi = aoi.geometry().bounds().getInfo()["coordinates"]
-    # Initialize the task of downloading an image
-    task = ee.batch.Export.image.toDrive(
-        image=new_img,  # an ee.Image object.
-        # an ee.Geometry object.
-        region=aoi,
-        description=folder_name,
-        folder=folder_name,
-        fileNamePrefix=file_name,
-        crs=crs,
-        scale=res,
-        maxPixels=1e13,
-    )
-    task.start()
-
-
-def export_img_to_asset(
-    ds, aoi, assetId, description="Exported_Data_To_Asset", res=1000, crs=None
-):
-    """Export an image from GEE with a given scale and area of interest
-    to the Google Drive. If input data is an ImageCollection, it will convert it
-    into an image and then export. The collection should contains only single data,
-    for example NDVI bands or precipitation bands or LST bands.
-
-        Args:
-            ds (ee.Image|ee.ImageCollection): The input ee.Image or ee.ImageCollection
-            aoi (FeatureCollection): The area of interest to clip the images.
-            folder_name (str): An output file name. Default is GEE_Data
-            res (int): A spatial resolution in meters. Default is 1km.
-            crs (str|optional): The output crs. Default to EPSG:4326
-
-        Returns:
-            ee.Image: the clipped image with crs: 4326
-    """
-    if crs is None:
-        crs = "EPSG:4326"
-    if isinstance(ds, ee.ImageCollection):
-        # Convert it to an image
-        img = ds.toBands()
-        # get bands and rename
-        oldband = img.bandNames().getInfo()
-        newband = ["_".join(i.split("_")[::-1]) for i in oldband]
-        # Rename it
-        new_img = img.select(oldband, newband).clip(aoi)
-    elif isinstance(ds, ee.Image):
-        new_img = ds.clip(aoi)
-    else:
-        raise TypeError("Unsupported data type!")
-
-    # Initialize the task of downloading an image
-    task = ee.batch.Export.image.toAsset(
-        image=new_img,  # an ee.Image object.
-        # an ee.Geometry object.
-        region=aoi.geometry().bounds().getInfo()["coordinates"],
-        description=description,
-        assetId=assetId,
-        crs=crs,
-        scale=res,
-    )
-    task.start()
