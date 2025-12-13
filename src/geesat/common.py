@@ -7,6 +7,22 @@ from dateutil.relativedelta import relativedelta
 from shapely.geometry import mapping
 
 
+def authenticate_gee(auth_mode=None, reset_credentials=False):
+    """Authenticate and initialize Earth Engine API.
+    Args:
+        auth_mode (str, optional): The authentication mode. Defaults to None.
+        reset_credentials (bool, optional): Whether to reset existing credentials. Defaults to False.
+    """
+    import os
+
+    if reset_credentials:
+        credential_path = os.path.expanduser("~/.config/earthengine/credentials")
+        if os.path.exists(credential_path):
+            os.remove(credential_path)
+    ee.Authenticate(auth_mode=auth_mode)
+    ee.Initialize()
+
+
 def geedate_to_python_datetime(date_code):
     """Convert GEE datetime code into Python readable datetime.
 
@@ -263,4 +279,5 @@ def export_img_to_asset(
         crs=crs,
         scale=res,
     )
+    task.start()
     task.start()

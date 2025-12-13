@@ -740,86 +740,35 @@ def adjust_date_col(ds):
 ################################ Extract Raster Values ##################################
 
 
-def extract_raster_values_by_polygon(ds, aoi, aggregate_method="mean", scale=1000):
-    """Extracting raster values from an Image by ee.FeatureCollection.
-
-    Args:
-        ds (ee.Image): An image for extraction.
-        aoi (ee.FeatureCollection): A FeatureCollection contains polygons.
-        aggregate_method (str, optional): A method for aggregating raster values by polygon. Defaults to "mean".
-        scale (int, optional): A scale for aggregation. Defaults to 1000.
-
-    Returns:
-        Dict: A dictionary contains extracted data and other properties.
-    """
-    if aggregate_method in ["max", "maximum"]:
-        method = ee.Reducer.mean()
-    elif aggregate_method in ["min", "minimum"]:
-        method = ee.Reducer.min()
-    elif aggregate_method in ["total", "sum"]:
-        method = ee.Reducer.sum()
-    elif aggregate_method in ["std"]:
-        method = ee.Reducer.stdDev()
-    else:
-        method = ee.Reducer.mean()
-
-    def polygon_value(feature):
-        mean = ds.reduceRegion(reducer=method, geometry=feature.geometry(), scale=scale)
-        return feature.set(mean)
-
-    data = aoi.map(polygon_value).getInfo()
-    return data
-
-
-def extract_raster_values_from_collection_by_polygons(
-    col, polygon, scale=1000, aggregate_method="mean"
+def extract_raster_values_by_polygons(
+    col, polygon, scale=1000, aggregate_method="mean", to_gdf=False
 ):
-    """
-    Extracts mean raster values from an Earth Engine ImageCollection over a polygon FeatureCollection
-    and returns the results as a pandas DataFrame.
-
-    This function maps over each image in the ImageCollection, performs a zonal statistics operation
-    using the provided polygons (FeatureCollection), and extracts the mean raster value per polygon
-    per date.
-
-    Parameters:
-    ----------
-    col : ee.ImageCollection
-        An Earth Engine ImageCollection (e.g., ERA5-Land monthly temperature).
-
-    polygon : ee.FeatureCollection
-        A FeatureCollection of polygons to extract values over.
-
-    scale : int, optional (default=1000)
-        The spatial resolution (in meters) at which to perform the reduction.
-
+    """Extract raster values by polygons.
+    Args:
+        col (ee.ImageCollection|ee.Image): The input image collection or image.
+        polygon (ee.FeatureCollection|gpd.GeoDataFrame): The input polygons.
+        scale (int|float, optional): The spatial resolution in meters. Defaults to 1000.
+        aggregate_method (str, optional): The aggregation method. Defaults to "mean".
+            Supported methods: 'max', 'min', 'mean', 'median', 'sum'.
+        to_gdf (bool, optional): Whether to return a GeoDataFrame. Defaults to False.
     Returns:
-    -------
-    pandas.DataFrame
-        A DataFrame where each row represents a polygon-date pair with the corresponding
-        mean raster value and any original polygon properties.
-
-    Example:
-    --------
-    >>> import ee
-    >>> import geopandas as gpd
-    >>> from yourmodule import extract_raster_values_from_collection_by_polygons
-
-    >>> ee.Initialize()
-    >>> col = ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY").select("temperature_2m").filterDate("2020-01-01", "2020-12-31")
-    >>> polygons = ee.FeatureCollection("users/your_username/your_polygon_asset")
-    >>> df = extract_raster_values_from_collection_by_polygons(col, polygons, scale=1000)
-    >>> print(df.head())
+        pd.DataFrame|gpd.GeoDataFrame: DataFrame or GeoDataFrame containing extracted raster values.
     """
-    if not isinstance(col, ee.ImageCollection):
-        raise TypeError("Unsupported data type. It only supports ee.ImageCollection")
+    if not isinstance(col, (ee.ImageCollection, ee.Image)):
+        raise TypeError(
+            "Unsupported data type. It only supports ee.ImageCollection or ee.Image"
+        )
     if not isinstance(polygon, ee.FeatureCollection):
         try:
+            if polygon.crs != "EPSG:4326":
+                polygon = polygon.to_crs("EPSG:4326")
             polygon = common.gdf_to_ee(polygon)
         except Exception as e:
             raise TypeError(
                 "Unsupported data type. It only supports ee.FeatureCollection or geopandas dataframe"
             ) from e
+    if to_gdf:
+        from shapely.geometry import shape
     if aggregate_method.lower() in ["max", "maximum"]:
         method = ee.Reducer.max()
     elif aggregate_method.lower() in ["min", "minimum"]:
@@ -841,41 +790,54 @@ def extract_raster_values_from_collection_by_polygons(
         ).map(lambda feature: feature.set("date", date))
         return stats
 
-    # Map the function over the collection
-    results = col.map(extract_values).flatten().getInfo()
-
+    if isinstance(col, ee.ImageCollection):
+        results = col.map(extract_values).flatten().getInfo()
+    if isinstance(col, ee.Image):
+        results = col.reduceRegions(
+            collection=polygon, reducer=method, scale=scale
+        ).getInfo()
     # Convert the results to a pandas DataFrame
     data = []
     for f in results["features"]:
         properties = f["properties"]
+        if to_gdf:
+            geom = f["geometry"]
+            properties["geometry"] = shape(geom)
         data.append(properties)
-    df = pd.DataFrame(data)
+    if to_gdf:
+        df = gpd.GeoDataFrame(data, geometry="geometry")
+    else:
+        df = pd.DataFrame(data)
     return df
 
 
-def extract_raster_values_by_point(
-    points, raster, scale=10, stride=100, keep_date=True
+def extract_image_collection_values_by_points(
+    points, col, scale=10, stride=100, keep_date=True
 ):
-    """Extract raster values at specified points.
+    """Extract raster values at specified points from an ee.ImageCollection.
     Args:
-        points (gpd.GeoDataFrame): GeoDataFrame containing point geometries.
-        raster (ee.ImageCollection): Earth Engine image from which to extract values.
-        stride (int): Number of points to process in each batch.
+        points (gpd.GeoDataFrame|ee.FeatureCollection): GeoDataFrame or FeatureCollection containing point geometries.
+        col (ee.ImageCollection): Earth Engine image collection from which to extract values.
+        scale (int|float, optional): The spatial resolution in meters. Defaults to 10.
+        stride (int, optional): Number of points to process in each batch. Defaults to 100.
+        keep_date (bool, optional): Whether to keep only the date part in the time column
     Returns:
-        pd.DataFrame: DataFrame containing extracted raster values and timestamps.
+        gpd.GeoDataFrame: GeoDataFrame containing extracted raster values.
     """
 
-    if not isinstance(points, gpd.GeoDataFrame):
-        raise TypeError("points must be a GeoDataFrame")
-    counts = len(points)
+    if isinstance(points, gpd.GeoDataFrame):
+        if points.crs != "EPSG:4326":
+            points = points.to_crs("EPSG:4326")
+        points = common.gdf_to_ee(points)
+    counts = points.size().getInfo()
     dlist = []
     for i in range(0, counts, stride):
         start = i
         end = i + stride
         if end > counts:
             end = counts
-        point = common.gdf_to_ee(points.iloc[start:end].reset_index(drop=True))
-        extracted_data = raster.getRegion(geometry=point, scale=scale).getInfo()
+        point = ee.FeatureCollection(points.toList(counts).slice(start, end))
+        extracted_data = col.getRegion(geometry=point, scale=scale).getInfo()
         tdf = pd.DataFrame(extracted_data[1:], columns=extracted_data[0])
         dlist.append(tdf)
     df = pd.concat(dlist, ignore_index=True)
@@ -884,11 +846,89 @@ def extract_raster_values_by_point(
     ]
     if keep_date:
         df["time"] = pd.to_datetime(df["time"]).dt.date
+    df = gpd.GeoDataFrame(
+        df, geometry=gpd.points_from_xy(df["longitude"], df["latitude"])
+    )
+    df = df.drop(columns=["longitude", "latitude"])
     return df
 
 
+def extract_raster_image_by_points(points, image, scale=10, stride=100):
+    """Extract raster values at specified points from an ee.Image.
+    Args:
+        points (gpd.GeoDataFrame|ee.FeatureCollection): GeoDataFrame or FeatureCollection containing point geometries.
+        image (ee.Image): Earth Engine image from which to extract values.
+        scale (int|float, optional): The spatial resolution in meters. Defaults to 10.
+        stride (int, optional): Number of points to process in each batch. Defaults to 100.
+    Returns:
+        gpd.GeoDataFrame: GeoDataFrame containing extracted raster values.
+    """
+    from shapely.geometry import shape
+
+    if isinstance(image, ee.ImageCollection):
+        raise TypeError("image must be an ee.Image, not ee.ImageCollection")
+    if isinstance(points, gpd.GeoDataFrame):
+        if points.crs != "EPSG:4326":
+            points = points.to_crs("EPSG:4326")
+        points = common.gdf_to_ee(points)
+    counts = points.size().getInfo()
+    dlist = []
+    for i in range(0, counts, stride):
+        start = i
+        end = i + stride
+        if end > counts:
+            end = counts
+        point = points.toList(counts).slice(start, end)
+        extracted_data = image.sampleRegions(
+            collection=ee.FeatureCollection(point), scale=scale, geometries=True
+        ).getInfo()
+        for feat in extracted_data["features"]:
+            props = feat["properties"]
+            props["geometry"] = shape(feat["geometry"])
+            dlist.append(props)
+    df = gpd.GeoDataFrame(dlist, geometry="geometry")
+    # drop longitude and latitude columns if exist
+    if "longitude" in df.columns:
+        df = df.drop(columns=["longitude", "latitude"])
+    return df
+
+
+def extract_raster_values_by_points(
+    points, col, scale=10, stride=100, keep_date=True, to_gdf=True
+):
+    """Extract raster values at specified points from an ee.ImageCollection or ee.Image.
+    Args:
+        points (gpd.GeoDataFrame|ee.FeatureCollection): GeoDataFrame or FeatureCollection
+            containing point geometries.
+        col (ee.ImageCollection|ee.Image): Earth Engine image collection or image
+            from which to extract values.
+        scale (int|float, optional): The spatial resolution in meters. Defaults to 10.
+        stride (int, optional): Number of points to process in each batch. Defaults to 100.
+        keep_date (bool, optional): Whether to keep only the date part in the time column.
+    Returns:
+        gpd.GeoDataFrame: GeoDataFrame containing extracted raster values.
+    """
+    if isinstance(col, ee.Image):
+        df = extract_raster_image_by_points(points, col, scale, stride)
+    elif isinstance(col, ee.ImageCollection):
+        df = extract_image_collection_values_by_points(
+            points, col, scale, stride, keep_date
+        )
+    else:
+        raise TypeError(
+            "Unsupported data type. It only supports ee.ImageCollection or ee.Image"
+        )
+    if to_gdf:
+        return df
+    else:
+        df["lon"] = df.geometry.x
+        df["lat"] = df.geometry.y
+        df = df.drop(columns=["geometry"])
+        return df
+
+
 ##################################### Processing #####################################
-def monthly_composite(col, mode=None):
+def calculate_monthly_composite(col, mode=None):
     """Return a collection of monthly images
 
     Args:
@@ -936,7 +976,7 @@ def monthly_composite(col, mode=None):
     return composite_col
 
 
-def daily_composite(ds, mode="max"):
+def calculate_daily_composite(ds, mode="max"):
     """Aggregate data from hourly to daily composites
 
     Args:
@@ -987,7 +1027,7 @@ def daily_composite(ds, mode="max"):
     return new_col
 
 
-def weekly_composite(ds, mode="max"):
+def calculate_weekly_composite(ds, mode="max"):
     """Aggregate data from daily/hourly to weekly composites
 
     Args:
@@ -1038,7 +1078,52 @@ def weekly_composite(ds, mode="max"):
     return new_col
 
 
-def calculate_monthly_anomaly(col, scale=1):
+def calculate_nday_composite(col, aggregate_method="mean", n_days=10):
+    """Aggregate data from daily to custom composites.
+
+    Args:
+        col (ee.ImageCollection): Input image collection.
+        aggregate_method (str, optional): Aggregation method. Defaults to 'mean'.
+        days (int, optional): Number of days for each composite. Defaults to 10.
+    Returns:
+        ee.ImageCollection: Custom composite image collection.
+    """
+    aggregate_method = aggregate_method.lower()
+    if aggregate_method in ["mean"]:
+        reducer = ee.Reducer.mean()
+    elif aggregate_method in ["max"]:
+        reducer = ee.Reducer.max()
+    elif aggregate_method in ["min"]:
+        reducer = ee.Reducer.min()
+    elif aggregate_method in ["median"]:
+        reducer = ee.Reducer.median()
+    elif aggregate_method in ["sum", "total"]:
+        reducer = ee.Reducer.sum()
+    else:
+        raise ValueError(
+            "Unsupported aggregate_method. Choose from 'mean', 'max', 'min', 'median', 'sum'."
+        )
+    start_date, end_date = date_range_col(col)
+    num_days = end_date.difference(start_date, "day").ceil().toInt()
+    num_list = ee.List.sequence(0, num_days, n_days)
+
+    def composite_func(n):
+        n = ee.Number(n)
+        start = start_date.advance(n, "day")
+        end = start.advance(n_days, "day")
+        subset = col.filterDate(start, end)
+        subset = subset.reduce(reducer)
+        # set start and end time
+        subset = subset.set(
+            {"system:time_start": start.millis(), "system:time_end": end.millis()}
+        )
+        return subset
+
+    composite_col = ee.ImageCollection(num_list.map(composite_func))
+    return composite_col
+
+
+def calculate_monthly_anomaly_index(col, scale=1):
     """Return a collection of monthly vegetation anomaly index.
 
     Args:
