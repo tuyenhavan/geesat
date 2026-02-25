@@ -7,7 +7,7 @@ import pandas as pd
 from geesat import common
 
 
-################################## Vegetation Indices ##################################
+################################## Vegetation Indices and LST ##################################
 def calculate_ndvi(data, nir_band="B8", red_band="B4"):
     """Calculate NDVI from an image or an ImageCollection.
 
@@ -265,6 +265,73 @@ def calculate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31
         )
 
     return landsat.map(add_indices)
+
+
+def load_landsat_lst(aoi, start_date="2020-10-01", end_date="2023-12-31"):
+    """Load Landsat (5, 7, 8, 9) land surface temperature (LST) for a given date range and bounding area.
+    Args:
+        aoi (ee.Geometry|ee.FeatureCollection|gpd.GeoDataFrame): The bounding area to filter the Landsat collection.
+        start_date (str): Start date for filtering the Landsat collection in 'YYYY-MM-DD' format.
+        end_date (str): End date for filtering the Landsat collection in 'YYYY-MM-DD' format.
+    Returns:
+        ee.ImageCollection: Landsat collection with LST.
+    """
+    import geopandas as gpd
+
+    if isinstance(aoi, gpd.GeoDataFrame):
+        aoi = common.gdf_to_ee(aoi)
+    ls5 = (
+        ee.ImageCollection("LANDSAT/LT05/C02/T1_L2")
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+    ).select(["ST_B6", "QA_PIXEL"], ["ST_B10", "QA_PIXEL"])
+    ls7 = (
+        ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+    ).select(["ST_B6", "QA_PIXEL"], ["ST_B10", "QA_PIXEL"])
+    ls8 = (
+        ee.ImageCollection("LANDSAT/LC08/C02/T1_L2")
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+    ).select(["ST_B10", "QA_PIXEL"])
+    ls9 = (
+        ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
+        .filterBounds(aoi)
+        .filterDate(start_date, end_date)
+    ).select(["ST_B10", "QA_PIXEL"])
+
+    def mask_landsat_cloud(img):
+        cloud_shadow_bit_mask = 1 << 3
+        cloud_bit_mask = 1 << 5
+        qa = img.select("QA_PIXEL")
+        mask = (
+            qa.bitwiseAnd(cloud_shadow_bit_mask)
+            .eq(0)
+            .And(qa.bitwiseAnd(cloud_bit_mask).eq(0))
+        )
+        return img.updateMask(mask)
+
+    landsat = (
+        ls5.merge(ls7)
+        .merge(ls8)
+        .merge(ls9)
+        .map(mask_landsat_cloud)
+        .sort("system:time_start")
+    )
+
+    def calculate_lst(image):
+        lst = (
+            image.select("ST_B10")
+            .multiply(0.00341802)
+            .add(149.0)
+            .subtract(273.15)
+            .rename("LST")
+        ).copyProperties(image, ["system:time_start"])
+        return lst
+
+    lst = landsat.map(calculate_lst)
+    return lst
 
 
 ################################## Cloud Masking ##################################
