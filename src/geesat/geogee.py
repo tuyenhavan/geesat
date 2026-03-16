@@ -184,7 +184,7 @@ def calculate_sen1_indices(col):
     Args:
         col (ee.ImageCollection): Sentinel-1 ImageCollection.
     Returns:
-        ee.ImageCollection: ImageCollection with added indices.
+        ee.ImageCollection: ImageCollection with added indices, including RVI and VH/VV ratio.
     """
 
     def add_indices(img):
@@ -209,7 +209,7 @@ def calculate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31
         start_date (str): Start date for filtering the Landsat collection in 'YYYY-MM-DD' format.
         end_date (str): End date for filtering the Landsat collection in 'YYYY-MM-DD' format.
     Returns:
-        ee.ImageCollection: Landsat collection with added indices.
+        ee.ImageCollection: Landsat collection with cloud masking applied for all indices, including NDVI, LST, NDWI, TVX, and VTI.
     """
     import geopandas as gpd
 
@@ -274,7 +274,7 @@ def load_landsat_lst(aoi, start_date="2020-10-01", end_date="2023-12-31"):
         start_date (str): Start date for filtering the Landsat collection in 'YYYY-MM-DD' format.
         end_date (str): End date for filtering the Landsat collection in 'YYYY-MM-DD' format.
     Returns:
-        ee.ImageCollection: Landsat collection with LST.
+        ee.ImageCollection: Landsat LST collection in degrees Celsius with cloud masking applied.
     """
     import geopandas as gpd
 
@@ -995,12 +995,12 @@ def extract_raster_values_by_points(
 
 
 ##################################### Processing #####################################
-def calculate_monthly_composite(col, mode=None):
+def calculate_monthly_composite(col, aggregate_method=None):
     """Return a collection of monthly images
 
     Args:
         col (ee.ImageCollection): The input image collection.
-        mode (str): The aggregated method. Supported modes 'max', 'min',
+        aggregate_method (str): The aggregated method. Supported methods 'max', 'min',
                     'median', 'mean', 'sum'. Default to None.
 
     Returns:
@@ -1008,12 +1008,12 @@ def calculate_monthly_composite(col, mode=None):
     """
     if not isinstance(col, ee.ImageCollection):
         raise TypeError("Unsupported data type. Expected data is ee.ImageCollection")
-    if not isinstance(mode, (str, type(None))):
-        raise TypeError("Unsupported data type. Mode should be string")
-    if mode is None:
-        mode = "max"
-    mode = mode.lower().strip()
-    if mode not in ["max", "mean", "median", "mvc", "min", "sum"]:
+    if not isinstance(aggregate_method, (str, type(None))):
+        raise TypeError("Unsupported data type. Aggregate method should be string")
+    if aggregate_method is None:
+        aggregate_method = "max"
+    aggregate_method = aggregate_method.lower().strip()
+    if aggregate_method not in ["max", "mean", "median", "mvc", "min", "sum"]:
         raise ValueError(
             "Unsupported methods. Please choose mean, max, min, sum, or median"
         )
@@ -1027,13 +1027,13 @@ def calculate_monthly_composite(col, mode=None):
         monthly_col = col.filterDate(start_date, end_date)
         size = monthly_col.size()
 
-        if mode == "mean":
+        if aggregate_method == "mean":
             img = monthly_col.mean().set({"system:time_start": start_date.millis()})
-        elif mode == "max":
+        elif aggregate_method == "max":
             img = monthly_col.max().set({"system:time_start": start_date.millis()})
-        elif mode == "min":
+        elif aggregate_method == "min":
             img = monthly_col.min().set({"system:time_start": start_date.millis()})
-        elif mode in ["median", "mvc"]:
+        elif aggregate_method in ["median", "mvc"]:
             img = monthly_col.median().set({"system:time_start": start_date.millis()})
         else:
             img = monthly_col.sum().set({"system:time_start": start_date.millis()})
@@ -1043,18 +1043,18 @@ def calculate_monthly_composite(col, mode=None):
     return composite_col
 
 
-def calculate_daily_composite(ds, mode="max"):
+def calculate_daily_composite(ds, aggregate_method="max"):
     """Aggregate data from hourly to daily composites
 
     Args:
         ds (ImageCollection): The input image collection.
-        mode (str|optional): Aggregated modes [max, min, mean, median, sum]. Default to max.
+        aggregate_method (str|optional): Aggregated methods [max, min, mean, median, sum]. Default to max.
 
     Return:
         ImageCollection: The daily composite
     """
-    if isinstance(mode, str):
-        mode = mode.lower().strip()
+    if isinstance(aggregate_method, str):
+        aggregate_method = aggregate_method.lower().strip()
 
     # Get the starting and ending dates of the collection
     start_date = ee.Date(
@@ -1077,15 +1077,15 @@ def calculate_daily_composite(ds, mode="max"):
         subcol = ds.filterDate(first_date, last_date)
         size = subcol.size()
 
-        if mode in ["max", "maximum"]:
+        if aggregate_method in ["max", "maximum"]:
             img = subcol.max().set({"system:time_start": first_date.millis()})
-        elif mode in ["mean", "average"]:
+        elif aggregate_method in ["mean", "average"]:
             img = subcol.mean().set({"system:time_start": first_date.millis()})
-        elif mode in ["min", "minimum"]:
+        elif aggregate_method in ["min", "minimum"]:
             img = subcol.min().set({"system:time_start": first_date.millis()})
-        elif mode in ["median"]:
+        elif aggregate_method in ["median"]:
             img = subcol.median().set({"system:time_start": first_date.millis()})
-        elif mode in ["sum", "total"]:
+        elif aggregate_method in ["sum", "total"]:
             img = subcol.sum().set({"system:time_start": first_date.millis()})
 
         return ee.Algorithms.If(size.gt(0), img)
@@ -1094,18 +1094,18 @@ def calculate_daily_composite(ds, mode="max"):
     return new_col
 
 
-def calculate_weekly_composite(ds, mode="max"):
+def calculate_weekly_composite(ds, aggregate_method="max"):
     """Aggregate data from daily/hourly to weekly composites
 
     Args:
         ds (ImageCollection): The input image collection.
-        mode (str|optional): Aggregation mode [max, min, mean, median, sum]. Defaults to "max".
+        aggregate_method (str|optional): Aggregation method [max, min, mean, median, sum]. Defaults to "max".
 
     Returns:
         ImageCollection: The weekly composite.
     """
-    if isinstance(mode, str):
-        mode = mode.lower().strip()
+    if isinstance(aggregate_method, str):
+        aggregate_method = aggregate_method.lower().strip()
 
     # Get the starting and ending dates
     start_date = ee.Date(
@@ -1128,15 +1128,15 @@ def calculate_weekly_composite(ds, mode="max"):
         subcol = ds.filterDate(first_date, last_date)
         size = subcol.size()
 
-        if mode in ["max", "maximum"]:
+        if aggregate_method in ["max", "maximum"]:
             img = subcol.max().set({"system:time_start": first_date.millis()})
-        elif mode in ["mean", "average"]:
+        elif aggregate_method in ["mean", "average"]:
             img = subcol.mean().set({"system:time_start": first_date.millis()})
-        elif mode in ["min", "minimum"]:
+        elif aggregate_method in ["min", "minimum"]:
             img = subcol.min().set({"system:time_start": first_date.millis()})
-        elif mode in ["median"]:
+        elif aggregate_method in ["median"]:
             img = subcol.median().set({"system:time_start": first_date.millis()})
-        elif mode in ["sum", "total"]:
+        elif aggregate_method in ["sum", "total"]:
             img = subcol.sum().set({"system:time_start": first_date.millis()})
 
         return ee.Algorithms.If(size.gt(0), img)
@@ -1151,7 +1151,7 @@ def calculate_nday_composite(col, aggregate_method="mean", n_days=10):
     Args:
         col (ee.ImageCollection): Input image collection.
         aggregate_method (str, optional): Aggregation method. Defaults to 'mean'.
-        days (int, optional): Number of days for each composite. Defaults to 10.
+        n_days (int, optional): Number of days for each composite. Defaults to 10.
     Returns:
         ee.ImageCollection: Custom composite image collection.
     """
