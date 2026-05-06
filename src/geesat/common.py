@@ -7,6 +7,33 @@ from dateutil.relativedelta import relativedelta
 from shapely.geometry import mapping
 
 
+def list_files(directory, ext=None):
+    """
+    List all files in a directory with an optional file extension filter.
+
+    Args:
+        directory (str): The path to the directory.
+        ext (str, optional): The file extension to filter by (e.g., '.txt'). Defaults to None.
+
+    Returns:
+        list: A list of file paths that match the criteria.
+    """
+    import os
+
+    if not os.path.isdir(directory):
+        raise ValueError(f"The provided path '{directory}' is not a valid directory.")
+    flist = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if ext is not None:
+                ext = f".{ext.lstrip('.')}"
+                if file.endswith(ext):
+                    flist.append(os.path.join(root, file))
+            else:
+                flist.append(os.path.join(root, file))
+    return flist
+
+
 def authenticate_gee(auth_mode=None, reset_credentials=False):
     """Authenticate and initialize Earth Engine API.
     Args:
@@ -280,4 +307,39 @@ def export_img_to_asset(
         scale=res,
     )
     task.start()
-    task.start()
+
+
+def get_utm_zone_from_longlat(longitude, latitude):
+    """
+    Determines the UTM zone number and hemisphere (N/S) for a given latitude and longitude.
+
+    Parameters:
+    -----------
+    longitude (x): float
+        Longitude coordinate in decimal degrees.
+    latitude (y): float
+        Latitude coordinate in decimal degrees.
+
+    Returns:
+    --------
+    str
+        UTM zone with hemisphere (e.g., "34N", "35N") and EPSG codes.
+
+    Example:
+    --------
+    >>> get_utm_zone_from_longlat(31.2357, 30.0444)  # Cairo, Egypt
+    {'zone': '36N', 'epsg': 'EPSG:32636'}
+    """
+    if not -180 <= longitude <= 180:
+        raise ValueError("Longitude must be within the range [-180, 180].")
+    if not -90 <= latitude <= 90:
+        raise ValueError("Latitude must be within the range [-90, 90].")
+    # Calculate UTM zone number
+    utm_zone = int((longitude + 180) / 6) + 1
+
+    # Determine hemisphere
+    hemisphere = "N" if latitude >= 0 else "S"
+    zone_code = f"{utm_zone}{hemisphere}"
+    zone = zone_code[:-1]
+    epsg_code = f"EPSG:326{zone}" if hemisphere == "N" else f"EPSG:327{zone}"
+    return {"zone": zone_code, "epsg": epsg_code}
