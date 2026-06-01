@@ -283,6 +283,7 @@ def prepare_sentinel1_collection(
 ):
     """
     Prepare a Sentinel-1 image collection by applying border noise correction and speckle filtering.
+    code adapted from A collection of functions to perform mono-temporal and multi-temporal speckle filtering by  A., Vollrath A., Braun, C., Slagter B., Balling J., Gou Y., Gorelick N.,  Reiche J.
     Args:
         col (ee.ImageCollection, optional): Input image collection to prepare. If None, the function will select the Sentinel-1 image collection based on the provided parameters. Defaults to None.
         roi (ee.Geometry, optional): Region of interest to filter the image collection. Defaults to None.
