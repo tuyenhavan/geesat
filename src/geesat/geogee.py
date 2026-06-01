@@ -8,7 +8,7 @@ from geesat import common
 
 
 ################################## Vegetation Indices and LST ##################################
-def calculate_ndvi(data, nir_band="B8", red_band="B4"):
+def generate_ndvi(data, nir_band="B8", red_band="B4"):
     """Calculate NDVI from an image or an ImageCollection.
 
     Args:
@@ -47,7 +47,7 @@ def calculate_ndvi(data, nir_band="B8", red_band="B4"):
     return ndvi
 
 
-def calculate_evi(data, nir_band="B8", red_band="B4", blue_band="B2"):
+def generate_evi(data, nir_band="B8", red_band="B4", blue_band="B2"):
     """Calculate EVI from an image or an ImageCollection.
 
     Args:
@@ -57,7 +57,7 @@ def calculate_evi(data, nir_band="B8", red_band="B4", blue_band="B2"):
         blue_band (str, optional): The name of the blue band. Defaults to "B2".
 
     Returns:
-        ee.Image|ee.ImageCollection: The NDVI image or ImageCollection.
+        ee.Image|ee.ImageCollection: The EVI image or ImageCollection.
     """
     if isinstance(data, ee.ImageCollection):
         evi = data.map(
@@ -92,7 +92,7 @@ def calculate_evi(data, nir_band="B8", red_band="B4", blue_band="B2"):
     return evi
 
 
-def calculate_ndwi(data, nir_band="B8", swir_band="B11"):
+def generate_ndwi(data, nir_band="B8", swir_band="B11"):
     """Calculate NDWI from an image or an ImageCollection.
 
     Args:
@@ -134,7 +134,7 @@ def calculate_ndwi(data, nir_band="B8", swir_band="B11"):
     return ndwi
 
 
-def calculate_savi(data, nir_band="B8", red_band="B4", L=0.5):
+def generate_savi(data, nir_band="B8", red_band="B4", L=0.5):
     """Calculate SAVI from an image or an ImageCollection.
 
     Args:
@@ -179,8 +179,8 @@ def calculate_savi(data, nir_band="B8", red_band="B4", L=0.5):
     return savi
 
 
-def calculate_sen1_indices(col):
-    """Calculate Sentinel-1 indices for an ImageCollection.
+def generate_sentinel1_indices(col):
+    """Generate Sentinel-1 indices for an ImageCollection.
     Args:
         col (ee.ImageCollection): Sentinel-1 ImageCollection.
     Returns:
@@ -202,8 +202,8 @@ def calculate_sen1_indices(col):
     return col.map(add_indices)
 
 
-def calculate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31"):
-    """Calculate Landsat (8-9) indices for a given date range and bounding area.
+def generate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31"):
+    """Generate Landsat (8-9) indices for a given date range and bounding area.
     Args:
         aoi (ee.Geometry|ee.FeatureCollection|gpd.GeoDataFrame): The bounding area to filter the Landsat collection.
         start_date (str): Start date for filtering the Landsat collection in 'YYYY-MM-DD' format.
@@ -267,8 +267,8 @@ def calculate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31
     return landsat.map(add_indices)
 
 
-def load_landsat_lst(aoi, start_date="2020-10-01", end_date="2023-12-31"):
-    """Load Landsat (5, 7, 8, 9) land surface temperature (LST) for a given date range and bounding area.
+def generate_landsat_lst(aoi, start_date="2020-10-01", end_date="2023-12-31"):
+    """Generate cloud-free Landsat (5, 7, 8, 9) land surface temperature (LST) for a given date range and bounding area.
     Args:
         aoi (ee.Geometry|ee.FeatureCollection|gpd.GeoDataFrame): The bounding area to filter the Landsat collection.
         start_date (str): Start date for filtering the Landsat collection in 'YYYY-MM-DD' format.
@@ -379,7 +379,7 @@ def cloud_mask(col, from_bit, to_bit, qa_band_name, threshold=1):
     return cloudless_col
 
 
-def modis_cloud_mask(col, from_bit, to_bit, qa_band="DetailedQA", threshold=1):
+def generate_modis_cloud_mask(col, from_bit, to_bit, qa_band="DetailedQA", threshold=1):
     """Return a collection of MODIS cloud-free images
 
     Args:
@@ -398,7 +398,7 @@ def modis_cloud_mask(col, from_bit, to_bit, qa_band="DetailedQA", threshold=1):
     return out_col
 
 
-def landsat_cloud_mask(collection):
+def generate_landsat_cloud_mask(collection):
     """
     Applies a cloud and cloud shadow mask to a Landsat ImageCollection using the QA_PIXEL band.
     
@@ -418,7 +418,7 @@ def landsat_cloud_mask(collection):
                                 .filterDate("2023-01-01", "2023-12-31")
 
         # Apply the cloud masking function
-        masked_collection = mask_landsat_clouds(landsat_collection)
+        masked_collection = generate_landsat_cloud_mask(landsat_collection)
     """
 
     def mask_clouds(image):
@@ -433,7 +433,7 @@ def landsat_cloud_mask(collection):
     return collection.map(mask_clouds)
 
 
-def sen2_cloud_mask(
+def generate_sen2_cloud_mask(
     aoi,
     start_date,
     end_date,
@@ -500,7 +500,7 @@ def sen2_cloud_mask(
     start_date = '2020-05-01'
     end_date = '2020-12-31'
     cloud_filter = 10
-    result = s2cloud_mask(aoi, start_date, end_date, cloud_filter)"""
+    result = generate_sen2_cloud_mask(aoi, start_date, end_date, cloud_filter)"""
 
     # Sentinel-2 surface reflectance
     s2sr = (
@@ -630,7 +630,7 @@ def convert_landsat_lst_to_celsius(collection, roi=None, band="ST_10"):
         collection = collection.filterBounds(roi)
 
     # Apply cloud masking
-    collection = landsat_cloud_mask(collection)
+    collection = generate_landsat_cloud_mask(collection)
 
     def to_celsius(image):
         """Converts the specified thermal band from Kelvin to Celsius."""
@@ -642,7 +642,7 @@ def convert_landsat_lst_to_celsius(collection, roi=None, band="ST_10"):
     return collection.map(to_celsius)
 
 
-def kelvin_to_celsius(col):
+def generate_kelvin_to_celsius(col):
     """Convert temperature from Kelvin unit to celsius degree
 
     Args:
@@ -664,13 +664,13 @@ def kelvin_to_celsius(col):
     return out_data
 
 
-def scale_data(ds, scale_factor=1):
+def generate_scaled_data(ds, scale_factor=1):
     """Scaling ImageCollection or Image by a specified factor.
 
     Example: Scaling tmax and tmin variable in TerraClimate by a factor of 0.1
     (Please see band specification for scaling factor)
     ds = ee.ImageCollection("IDAHO_EPSCOR/TERRACLIMATE").select(["tmmn","tmmx"])
-    outds = data_scale(ds, scale_factor=0.1)
+    outds = generate_scaled_data(ds, scale_factor=0.1)
 
     Args:
         ds (ee.Image|ee.ImageCollection): An ImageCollection or Image object
@@ -692,7 +692,7 @@ def scale_data(ds, scale_factor=1):
         return scaled_data
 
 
-def resample_collection(col, resample_method=None, scale=None, crs=None):
+def generate_resample_collection(col, resample_method=None, scale=None, crs=None):
     """Return a collection of resampled images. Resampling methods include max, min,
     bilinear, bicubic, average, mode, and median.
 
@@ -995,7 +995,7 @@ def extract_raster_values_by_points(
 
 
 ##################################### Processing #####################################
-def calculate_monthly_composite(col, aggregate_method=None):
+def generate_monthly_composite(col, aggregate_method=None):
     """Return a collection of monthly images
 
     Args:
@@ -1043,7 +1043,7 @@ def calculate_monthly_composite(col, aggregate_method=None):
     return composite_col
 
 
-def calculate_daily_composite(ds, aggregate_method="max"):
+def generate_daily_composite(ds, aggregate_method="max"):
     """Aggregate data from hourly to daily composites
 
     Args:
@@ -1094,7 +1094,7 @@ def calculate_daily_composite(ds, aggregate_method="max"):
     return new_col
 
 
-def calculate_weekly_composite(ds, aggregate_method="max"):
+def generate_weekly_composite(ds, aggregate_method="max"):
     """Aggregate data from daily/hourly to weekly composites
 
     Args:
@@ -1128,9 +1128,7 @@ def calculate_weekly_composite(ds, aggregate_method="max"):
         subcol = ds.filterDate(first_date, last_date)
         size = subcol.size()
 
-        if aggregate_method in ["max", "maximum"]:
-            img = subcol.max().set({"system:time_start": first_date.millis()})
-        elif aggregate_method in ["mean", "average"]:
+        if aggregate_method in ["mean", "average"]:
             img = subcol.mean().set({"system:time_start": first_date.millis()})
         elif aggregate_method in ["min", "minimum"]:
             img = subcol.min().set({"system:time_start": first_date.millis()})
@@ -1138,14 +1136,15 @@ def calculate_weekly_composite(ds, aggregate_method="max"):
             img = subcol.median().set({"system:time_start": first_date.millis()})
         elif aggregate_method in ["sum", "total"]:
             img = subcol.sum().set({"system:time_start": first_date.millis()})
-
+        else:
+            img = subcol.max().set({"system:time_start": first_date.millis()})
         return ee.Algorithms.If(size.gt(0), img)
 
     new_col = ee.ImageCollection.fromImages(week_start_dates.map(sub_col))
     return new_col
 
 
-def calculate_nday_composite(col, aggregate_method="mean", n_days=10):
+def generate_nday_composite(col, aggregate_method="mean", n_days=10):
     """Aggregate data from daily to custom composites.
 
     Args:
@@ -1190,7 +1189,7 @@ def calculate_nday_composite(col, aggregate_method="mean", n_days=10):
     return composite_col
 
 
-def calculate_monthly_anomaly_index(col, scale=1):
+def generate_monthly_anomaly_index(col, scale=1):
     """Return a collection of monthly vegetation anomaly index.
 
     Args:
@@ -1202,7 +1201,7 @@ def calculate_monthly_anomaly_index(col, scale=1):
     """
     if not isinstance(col, ee.ImageCollection):
         raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")
-    col = common.scaling_data(col, scale)
+    col = generate_scaled_data(col, scale)
 
     first_date, latest_date = date_range_col(col)
     monthly_list = monthly_datetime_list(first_date, latest_date)
@@ -1224,7 +1223,7 @@ def calculate_monthly_anomaly_index(col, scale=1):
     return vai
 
 
-def calculate_monthly_vci(col):
+def generate_monthly_vci(col):
     """Return a collection of vegetation condition index.
 
     Args:
