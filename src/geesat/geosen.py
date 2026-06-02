@@ -229,8 +229,9 @@ def slope_correction(collection, model="volume", buffer=50):
         gamma0_flat = gamma0.divide(corr_model)
 
         # Back to dB
+        sar_bands = image.bandNames().remove("angle")
         gamma0_flat_db = (
-            ee.Image.constant(10).multiply(gamma0_flat.log10()).select(["VV", "VH"])
+            ee.Image.constant(10).multiply(gamma0_flat.log10()).select(sar_bands)
         )
 
         # Layover / shadow mask
@@ -317,49 +318,44 @@ def prepare_sentinel1_collection(
     """
 
     col = ee.ImageCollection("COPERNICUS/S1_GRD")
+    orbit_pass = orbit_pass.upper()
     # check if the orbit pass is valid
-    if orbit_pass not in ["ASCENDING", "DESCENDING"]:
-        raise ValueError("orbit_pass must be either 'ASCENDING' or 'DESCENDING'")
+    if orbit_pass not in ["ASCENDING", "DESCENDING", "BOTH"]:
+        raise ValueError(
+            "orbit_pass must be either 'ASCENDING', 'DESCENDING', or 'BOTH'"
+        )
+    if orbit_pass == "BOTH":
+        orbit_pass = ["ASCENDING", "DESCENDING"]
+    else:
+        orbit_pass = [orbit_pass]
     # check if the model is valid
     if model not in ["volume", "surface"]:
         raise ValueError("model must be either 'volume' or 'surface'")
-    if orbit_pass.upper() == "BOTH":
-        col = (
-            col.filterBounds(roi)
-            .filterDate(start_date, end_date)
-            .filter(ee.Filter.eq("instrumentMode", "IW"))
-            .filter(
-                ee.Filter.or_(
-                    ee.Filter.eq("orbitProperties_pass", "ASCENDING"),
-                    ee.Filter.eq("orbitProperties_pass", "DESCENDING"),
-                )
-            )
-        )
-    else:
-        col = (
-            col.filterBounds(roi)
-            .filterDate(start_date, end_date)
-            .filter(ee.Filter.eq("instrumentMode", "IW"))
-            .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
-        )
+    col = (
+        col.filterBounds(roi)
+        .filterDate(start_date, end_date)
+        .filter(ee.Filter.eq("instrumentMode", "IW"))
+        .filter(ee.Filter.inList("orbitProperties_pass", orbit_pass))
+    )
     col = col.map(db_to_lin).map(leefilter).map(lin_to_db)
     col = slope_correction(col, model=model, buffer=buffer)
-    return col
+    return col.select(["VV", "VH"])
 
 
-def generate_water_occurance(
-    collection,
+def generate_water_occurrence(
     roi,
+    collection=None,
     start_date="2022-01-01",
     end_date="2022-12-31",
     buffer=50,
     model="volume",
     polarization="VV",
     water_threshold=-15,
+    orbit_pass="ASCENDING",
 ):
     """Generate a water occurrence map from Sentinel-1 image collection.
     Args:
-        collection (ee.ImageCollection): Sentinel-1 image collection to generate the water occurrence map from.
+        collection (ee.ImageCollection, optional): Sentinel-1 image collection to generate the water occurrence map from. Defaults to None (ee.ImageCollection("COPERNICUS/S1_GRD").
         roi (ee.Geometry): Region of interest to filter the image collection.
         start_date (str, optional): Start date for filtering the image collection. Defaults to '2022-01-01'.
         end_date (str, optional): End date for filtering the image collection. Defaults to '2022-12-31'.
@@ -375,10 +371,32 @@ def generate_water_occurance(
         raise ValueError("polarization must be either 'VV' or 'VH'")
     if collection is None:
         col = prepare_sentinel1_collection(
-            roi, start_date=start_date, end_date=end_date, buffer=buffer, model=model
+            roi,
+            start_date=start_date,
+            end_date=end_date,
+            buffer=buffer,
+            model=model,
+            orbit_pass=orbit_pass,
         )
     else:
-        col = collection.filterBounds(roi).filterDate(start_date, end_date)
+        if orbit_pass == "BOTH":
+            col = (
+                collection.filterBounds(roi)
+                .filterDate(start_date, end_date)
+                .filter(ee.Filter.eq("instrumentMode", "IW"))
+                .filter(
+                    ee.Filter.inList(
+                        "orbitProperties_pass", ["ASCENDING", "DESCENDING"]
+                    )
+                )
+            )
+        else:
+            col = (
+                collection.filterBounds(roi)
+                .filterDate(start_date, end_date)
+                .filter(ee.Filter.eq("instrumentMode", "IW"))
+                .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
+            )
     col = geogee.generate_monthly_composite(col, aggregate_method="median")
     water_mask = (
         col.map(lambda img: img.select(polarization).lt(water_threshold))
