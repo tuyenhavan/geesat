@@ -2,6 +2,8 @@ import math
 
 import ee
 
+from geesat import geogee
+
 
 def mask_angle(image):
     """
@@ -83,145 +85,165 @@ def fmask_edge(image):
     return db_to_lin(result).set("system:time_start", image.get("system:time_start"))
 
 
-def slope_correction(
-    collection,
-    buffer=0,
-    scale=10,
-):
+def slope_correction(collection, model="volume", buffer=50):
     """
-    Apply a slope correction to the input collection using the volumetric model.
+    Radiometric terrain correction for Sentinel-1.
+    Adapted from this repo https://github.com/ESA-PhiLab/radiometric-slope-correction/tree/master
     Args:
-        collection (ee.ImageCollection): Input image collection to apply the slope correction to.
-        buffer (int, optional): Buffer distance in meters to apply to the layover and shadow masks. Defaults to 0.
-        scale (int, optional): Scale in meters to use for the elevation data. Defaults to 10.
+    collection (ee.ImageCollection): Image collection to apply the correction to
+    model (str): 'volume' or 'surface'
+    buffer (int or float): Buffer distance in meters
     Returns:
-        ee.ImageCollection: Slope-corrected image collection.
+    ee.ImageCollection: Terrain corrected image collection
     """
-    dem = ee.Image("USGS/SRTMGL1_003")
-    ninety_rad = ee.Image.constant(math.pi / 2)
-    dem_resampling = "bilinear"
 
-    def _volumetric_model_scf(theta_i_rad, alpha_r_rad):
+    elevation = ee.Image("USGS/SRTMGL1_003")
+
+    ninety_rad = ee.Image.constant(math.pi / 2.0)
+
+    # ---------------------------------------------------------------------
+    # Volumetric model (Hoekman 1990)
+    # ---------------------------------------------------------------------
+    def volume_model(theta_i_rad, alpha_r_rad):
+
         numerator = ninety_rad.subtract(theta_i_rad).add(alpha_r_rad).tan()
 
         denominator = ninety_rad.subtract(theta_i_rad).tan()
 
         return numerator.divide(denominator)
 
-    def _erode(mask, distance):
+    # ---------------------------------------------------------------------
+    # Surface model (Ulander et al. 1996)
+    # ---------------------------------------------------------------------
+    def surface_model(theta_i_rad, alpha_r_rad, alpha_az_rad):
+
+        numerator = ninety_rad.subtract(theta_i_rad).cos()
+
+        denominator = alpha_az_rad.cos().multiply(
+            ninety_rad.subtract(theta_i_rad).add(alpha_r_rad).cos()
+        )
+
+        return numerator.divide(denominator)
+
+    # ---------------------------------------------------------------------
+    # Buffer / erosion
+    # ---------------------------------------------------------------------
+    def erode(img, distance):
+
         d = (
-            mask.Not()
+            img.Not()
             .unmask(1)
             .fastDistanceTransform(30)
             .sqrt()
             .multiply(ee.Image.pixelArea().sqrt())
         )
 
-        return mask.updateMask(d.gt(distance))
+        return img.updateMask(d.gt(distance))
 
-    def _masking(alpha_r_rad, theta_i_rad, buffer_distance):
+    # ---------------------------------------------------------------------
+    # Layover-shadow mask
+    # ---------------------------------------------------------------------
+    def masking(alpha_r_rad, theta_i_rad, proj, buffer_distance):
 
-        layover = alpha_r_rad.lt(theta_i_rad)
+        layover = alpha_r_rad.lt(theta_i_rad).rename("layover")
 
         shadow = alpha_r_rad.gt(
             ee.Image.constant(-1).multiply(ninety_rad.subtract(theta_i_rad))
-        )
+        ).rename("shadow")
 
         mask = layover.And(shadow)
 
         if buffer_distance > 0:
-            mask = _erode(mask, buffer_distance)
+            mask = erode(mask, buffer_distance)
 
         return mask.rename("no_data_mask")
 
-    def _correct(image):
-
-        band_names = image.bandNames()
+    # ---------------------------------------------------------------------
+    # Image correction
+    # ---------------------------------------------------------------------
+    def correct(image):
 
         geom = image.geometry()
-        proj = image.select(0).projection()
 
-        elevation = dem.resample(dem_resampling).reproject(proj, None, scale).clip(geom)
+        proj = image.select(1).projection()
 
-        heading = ee.Terrain.aspect(image.select("angle")).reduceRegion(
-            reducer=ee.Reducer.mean(),
-            geometry=geom,
-            scale=1000,
-            maxPixels=1e9,
+        # Mean radar heading
+        heading = ee.Number(
+            ee.Terrain.aspect(image.select("angle"))
+            .reduceRegion(
+                reducer=ee.Reducer.mean(), geometry=geom, scale=1000, maxPixels=1e9
+            )
+            .get("aspect")
         )
 
-        heading = ee.Dictionary(heading).combine({"aspect": 0}, False).get("aspect")
-
-        heading = ee.Algorithms.If(
-            ee.Number(heading).gt(180),
-            ee.Number(heading).subtract(360),
-            ee.Number(heading),
-        )
+        # Sigma0 dB -> power
+        sigma0_pow = ee.Image.constant(10).pow(image.divide(10.0))
 
         # Radar geometry
-        theta_i_rad = image.select("angle").multiply(math.pi / 180)
+        theta_i_rad = image.select("angle").multiply(math.pi / 180.0).clip(geom)
 
-        phi_i_rad = ee.Image.constant(heading).multiply(math.pi / 180)
+        phi_i_rad = ee.Image.constant(heading).multiply(math.pi / 180.0)
 
         # Terrain geometry
         alpha_s_rad = (
-            ee.Terrain.slope(elevation).select("slope").multiply(math.pi / 180)
+            ee.Terrain.slope(elevation)
+            .select("slope")
+            .multiply(math.pi / 180.0)
+            .setDefaultProjection(proj)
+            .clip(geom)
         )
-
-        aspect = ee.Terrain.aspect(elevation).select("aspect").clip(geom)
-
-        aspect_minus = aspect.updateMask(aspect.gt(180)).subtract(360)
 
         phi_s_rad = (
-            aspect.updateMask(aspect.lte(180))
-            .unmask()
-            .add(aspect_minus.unmask())
-            .multiply(-1)
-            .multiply(math.pi / 180)
+            ee.Terrain.aspect(elevation)
+            .select("aspect")
+            .multiply(math.pi / 180.0)
+            .setDefaultProjection(proj)
+            .clip(geom)
         )
 
-        # Model geometry
+        # Relative geometry
         phi_r_rad = phi_i_rad.subtract(phi_s_rad)
 
+        # Range slope
         alpha_r_rad = alpha_s_rad.tan().multiply(phi_r_rad.cos()).atan()
 
+        # Azimuth slope
         alpha_az_rad = alpha_s_rad.tan().multiply(phi_r_rad.sin()).atan()
 
         # Gamma0
-        gamma0 = image.divide(theta_i_rad.cos())
+        gamma0 = sigma0_pow.divide(theta_i_rad.cos())
 
-        # Volume model
-        scf = _volumetric_model_scf(
-            theta_i_rad,
-            alpha_r_rad,
+        # Terrain correction model
+        if model == "volume":
+
+            corr_model = volume_model(theta_i_rad, alpha_r_rad)
+
+        elif model == "surface":
+
+            corr_model = surface_model(theta_i_rad, alpha_r_rad, alpha_az_rad)
+
+        else:
+            raise ValueError("model must be 'volume' or 'surface'")
+
+        # Flattened Gamma0
+        gamma0_flat = gamma0.divide(corr_model)
+
+        # Back to dB
+        gamma0_flat_db = (
+            ee.Image.constant(10).multiply(gamma0_flat.log10()).select(["VV", "VH"])
         )
 
-        gamma0_flat = gamma0.multiply(scf)
+        # Layover / shadow mask
+        mask = masking(alpha_r_rad, theta_i_rad, proj, buffer)
 
-        mask = _masking(
-            alpha_r_rad,
-            theta_i_rad,
-            buffer,
+        return gamma0_flat_db.addBands(mask).copyProperties(
+            image, image.propertyNames()
         )
 
-        output = ee.Image(
-            gamma0_flat.updateMask(mask).rename(band_names).copyProperties(image)
-        )
-        output = output.addBands(
-            image.select("angle"),
-            None,
-            True,
-        )
-
-        return output.set(
-            "system:time_start",
-            image.get("system:time_start"),
-        )
-
-    return collection.map(_correct)
+    return collection.map(correct)
 
 
-def leefilter(image, kernel_size=9):
+def leefilter(image, kernel_size=7):
     """
     Apply a Lee filter to the input image.
     Args:
@@ -231,7 +253,7 @@ def leefilter(image, kernel_size=9):
     ee.Image: Image with the Lee filter applied.
 
     """
-    bandNames = image.bandNames().remove("angle")
+    band_names = image.bandNames().remove("angle")
 
     # S1-GRD images are multilooked 5 times in range
     enl = 5
@@ -241,77 +263,109 @@ def leefilter(image, kernel_size=9):
 
     # MMSE estimator
     # Neighbourhood mean and variance
-    oneImg = ee.Image.constant(1)
+    one_img = ee.Image.constant(1)
     # Estimate stats
     reducers = ee.Reducer.mean().combine(
         reducer2=ee.Reducer.variance(), sharedInputs=True
     )
-    stats = image.select(bandNames).reduceNeighborhood(
+    stats = image.select(band_names).reduceNeighborhood(
         reducer=reducers,
         kernel=ee.Kernel.square(kernel_size / 2, "pixels"),
         optimization="window",
     )
-    meanBand = bandNames.map(lambda bandName: ee.String(bandName).cat("_mean"))
-    varBand = bandNames.map(lambda bandName: ee.String(bandName).cat("_variance"))
+    mean_band = band_names.map(lambda bandName: ee.String(bandName).cat("_mean"))
+    var_band = band_names.map(lambda bandName: ee.String(bandName).cat("_variance"))
 
-    z_bar = stats.select(meanBand)
-    varz = stats.select(varBand)
+    z_bar = stats.select(mean_band)
+    varz = stats.select(var_band)
     # Estimate weight
     varx = (varz.subtract(z_bar.pow(2).multiply(eta.pow(2)))).divide(
-        oneImg.add(eta.pow(2))
+        one_img.add(eta.pow(2))
     )
     b = varx.divide(varz)
 
     # if b is negative set it to zero
     new_b = b.where(b.lt(0), 0)
     output = (
-        oneImg.subtract(new_b)
+        one_img.subtract(new_b)
         .multiply(z_bar.abs())
-        .add(new_b.multiply(image.select(bandNames)))
+        .add(new_b.multiply(image.select(band_names)))
     )
-    output = output.rename(bandNames)
+    output = output.rename(band_names)
     return image.addBands(output, None, True)
 
 
 def prepare_sentinel1_collection(
-    col=None,
-    roi=None,
+    roi,
+    orbit_pass="ASCENDING",
     start_date="2022-01-01",
     end_date="2022-12-31",
-    polarization=None,
-    orbit="ASCENDING",
+    buffer=50,
+    model="volume",
 ):
-    """
-    Prepare a Sentinel-1 image collection by applying border noise correction and speckle filtering.
-    code adapted from A collection of functions to perform mono-temporal and multi-temporal speckle filtering by  A., Vollrath A., Braun, C., Slagter B., Balling J., Gou Y., Gorelick N.,  Reiche J.
+    """Prepare a Sentinel-1 image collection by applying the Lee filter and slope correction.
     Args:
-        col (ee.ImageCollection, optional): Input image collection to prepare. If None, the function will select the Sentinel-1 image collection based on the provided parameters. Defaults to None.
-        roi (ee.Geometry, optional): Region of interest to filter the image collection. Defaults to None.
-        start_date (str, optional): Start date to filter the image collection. Defaults to "2022-01-01".
-        end_date (str, optional): End date to filter the image collection. Defaults to "2022-12-31".
-        polarization (str, optional): Polarization to filter the image collection. Can be "VV", "VH", or "VVVH". Defaults to None.
-        orbit (str, optional): Orbit direction to filter the image collection. Can be "ASCENDING", "DESCENDING", or "BOTH". Defaults to "ASCENDING".
+        roi (ee.Geometry): Region of interest to filter the image collection.
+        polarization (str, optional): Polarization to filter the image collection. Defaults to 'VV'.
+        orbit_pass (str, optional): Orbit pass to filter the image collection. Either 'ASCENDING' or 'DESCENDING'. Defaults to 'ASCENDING'.
+        start_date (str, optional): Start date for filtering the image collection. Defaults to '2022-01-01'.
+        end_date (str, optional): End date for filtering the image collection. Defaults to '2022-12-31'.
+        buffer (int, optional): Buffer distance in meters for slope correction. Defaults to 50.
+        model (str, optional): Slope correction model to use. Either 'volume' or 'surface'. Defaults to 'volume'.
     Returns:
         ee.ImageCollection: Prepared Sentinel-1 image collection.
     """
-    col = col if col is not None else ee.ImageCollection("COPERNICUS/S1_GRD_FLOAT")
-    if roi is not None:
-        col = col.filterBounds(roi)
-    col = col.filterDate(start_date, end_date)
-    # Ensure polarization is valid
-    if polarization is not None and polarization.upper() not in ["VV", "VH", "VVVH"]:
-        raise ValueError("Polarization must be 'VV', 'VH', or 'VVVH'")
-    # Ensure orbit is valid
-    if orbit.upper() not in ["ASCENDING", "DESCENDING", "BOTH"]:
-        raise ValueError("Orbit must be 'ASCENDING', 'DESCENDING', or 'BOTH'")
-    orbit = orbit.upper()
-    col = col.filter(ee.Filter.eq("orbitProperties_pass", orbit))
-    if polarization is None:
-        polarization = ["VV", "VH", "angle"]
-    col = col.select(polarization)
-    border_noise_correction = col.map(fmask_edge)
-    speckle_filtered = border_noise_correction.map(leefilter)
-    slope_corrected = slope_correction(speckle_filtered)
-    # convert it dB
-    db_converted = slope_corrected.map(lin_to_db)
-    return db_converted
+
+    col = ee.ImageCollection("COPERNICUS/S1_GRD")
+    # check if the orbit pass is valid
+    if orbit_pass not in ["ASCENDING", "DESCENDING"]:
+        raise ValueError("orbit_pass must be either 'ASCENDING' or 'DESCENDING'")
+    # check if the model is valid
+    if model not in ["volume", "surface"]:
+        raise ValueError("model must be either 'volume' or 'surface'")
+    col = (
+        col.filterBounds(roi)
+        .filterDate(start_date, end_date)
+        .filter(ee.Filter.eq("instrumentMode", "IW"))
+        .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
+    )
+    col = col.map(db_to_lin).map(leefilter).map(lin_to_db)
+    col = slope_correction(col, model=model, buffer=buffer)
+    return col
+
+
+def generate_water_occurance(
+    roi,
+    start_date="2022-01-01",
+    end_date="2022-12-31",
+    buffer=50,
+    model="volume",
+    polarization="VV",
+    water_threshold=-15,
+):
+    """Generate a water occurrence map from Sentinel-1 image collection.
+    Args:
+        roi (ee.Geometry): Region of interest to filter the image collection.
+        start_date (str, optional): Start date for filtering the image collection. Defaults to '2022-01-01'.
+        end_date (str, optional): End date for filtering the image collection. Defaults to '2022-12-31'.
+        buffer (int, optional): Buffer distance in meters for slope correction. Defaults to 50.
+        model (str, optional): Slope correction model to use. Either 'volume' or 'surface'. Defaults to 'volume'.
+        polarization (str, optional): Polarization to use for water detection. Defaults to 'VV'.
+        water_threshold (float, optional): Threshold for water detection in dB. Defaults to -15.
+    Returns:
+        ee.Image: Water occurrence map.
+    """
+    # check polarization
+    if polarization not in ["VV", "VH"]:
+        raise ValueError("polarization must be either 'VV' or 'VH'")
+    col = prepare_sentinel1_collection(
+        roi, start_date=start_date, end_date=end_date, buffer=buffer, model=model
+    )
+    col = geogee.generate_monthly_composite(col, aggregate_method="median")
+    water_mask = (
+        col.map(lambda img: img.select(polarization).lt(water_threshold))
+        .sum()
+        .divide(col.size())
+        .multiply(100)
+    )
+    return water_mask.rename("water_occurance")
