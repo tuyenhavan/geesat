@@ -323,12 +323,25 @@ def prepare_sentinel1_collection(
     # check if the model is valid
     if model not in ["volume", "surface"]:
         raise ValueError("model must be either 'volume' or 'surface'")
-    col = (
-        col.filterBounds(roi)
-        .filterDate(start_date, end_date)
-        .filter(ee.Filter.eq("instrumentMode", "IW"))
-        .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
-    )
+    if orbit_pass.upper() == "BOTH":
+        col = (
+            col.filterBounds(roi)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(
+                ee.Filter.or_(
+                    ee.Filter.eq("orbitProperties_pass", "ASCENDING"),
+                    ee.Filter.eq("orbitProperties_pass", "DESCENDING"),
+                )
+            )
+        )
+    else:
+        col = (
+            col.filterBounds(roi)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
+        )
     col = col.map(db_to_lin).map(leefilter).map(lin_to_db)
     col = slope_correction(col, model=model, buffer=buffer)
     return col
