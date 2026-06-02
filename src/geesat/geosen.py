@@ -1,6 +1,7 @@
 import math
 
 import ee
+from narwhals import col
 
 from geesat import geogee
 
@@ -336,6 +337,8 @@ def prepare_sentinel1_collection(
         .filterDate(start_date, end_date)
         .filter(ee.Filter.eq("instrumentMode", "IW"))
         .filter(ee.Filter.inList("orbitProperties_pass", orbit_pass))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
     )
     col = col.map(db_to_lin).map(leefilter).map(lin_to_db)
     col = slope_correction(col, model=model, buffer=buffer)
@@ -370,7 +373,7 @@ def generate_water_occurrence(
     if polarization not in ["VV", "VH"]:
         raise ValueError("polarization must be either 'VV' or 'VH'")
     if collection is None:
-        col = prepare_sentinel1_collection(
+        collection = prepare_sentinel1_collection(
             roi,
             start_date=start_date,
             end_date=end_date,
@@ -380,7 +383,7 @@ def generate_water_occurrence(
         )
     else:
         if orbit_pass == "BOTH":
-            col = (
+            collection = (
                 collection.filterBounds(roi)
                 .filterDate(start_date, end_date)
                 .filter(ee.Filter.eq("instrumentMode", "IW"))
@@ -391,17 +394,19 @@ def generate_water_occurrence(
                 )
             )
         else:
-            col = (
+            collection = (
                 collection.filterBounds(roi)
                 .filterDate(start_date, end_date)
                 .filter(ee.Filter.eq("instrumentMode", "IW"))
                 .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
             )
-    col = geogee.generate_monthly_composite(col, aggregate_method="median")
+    collection = geogee.generate_monthly_composite(
+        collection, aggregate_method="median"
+    )
     water_mask = (
-        col.map(lambda img: img.select(polarization).lt(water_threshold))
+        collection.map(lambda img: img.select(polarization).lt(water_threshold))
         .sum()
-        .divide(col.size())
+        .divide(collection.size())
         .multiply(100)
     )
-    return water_mask.rename("water_occurance")
+    return water_mask.rename("water_occurrence")
