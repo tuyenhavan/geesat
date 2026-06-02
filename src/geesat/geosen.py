@@ -323,18 +323,32 @@ def prepare_sentinel1_collection(
     # check if the model is valid
     if model not in ["volume", "surface"]:
         raise ValueError("model must be either 'volume' or 'surface'")
-    col = (
-        col.filterBounds(roi)
-        .filterDate(start_date, end_date)
-        .filter(ee.Filter.eq("instrumentMode", "IW"))
-        .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
-    )
+    if orbit_pass.upper() == "BOTH":
+        col = (
+            col.filterBounds(roi)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(
+                ee.Filter.or_(
+                    ee.Filter.eq("orbitProperties_pass", "ASCENDING"),
+                    ee.Filter.eq("orbitProperties_pass", "DESCENDING"),
+                )
+            )
+        )
+    else:
+        col = (
+            col.filterBounds(roi)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.eq("orbitProperties_pass", orbit_pass))
+        )
     col = col.map(db_to_lin).map(leefilter).map(lin_to_db)
     col = slope_correction(col, model=model, buffer=buffer)
     return col
 
 
 def generate_water_occurance(
+    collection,
     roi,
     start_date="2022-01-01",
     end_date="2022-12-31",
@@ -345,6 +359,7 @@ def generate_water_occurance(
 ):
     """Generate a water occurrence map from Sentinel-1 image collection.
     Args:
+        collection (ee.ImageCollection): Sentinel-1 image collection to generate the water occurrence map from.
         roi (ee.Geometry): Region of interest to filter the image collection.
         start_date (str, optional): Start date for filtering the image collection. Defaults to '2022-01-01'.
         end_date (str, optional): End date for filtering the image collection. Defaults to '2022-12-31'.
@@ -358,9 +373,12 @@ def generate_water_occurance(
     # check polarization
     if polarization not in ["VV", "VH"]:
         raise ValueError("polarization must be either 'VV' or 'VH'")
-    col = prepare_sentinel1_collection(
-        roi, start_date=start_date, end_date=end_date, buffer=buffer, model=model
-    )
+    if collection is None:
+        col = prepare_sentinel1_collection(
+            roi, start_date=start_date, end_date=end_date, buffer=buffer, model=model
+        )
+    else:
+        col = collection.filterBounds(roi).filterDate(start_date, end_date)
     col = geogee.generate_monthly_composite(col, aggregate_method="median")
     water_mask = (
         col.map(lambda img: img.select(polarization).lt(water_threshold))
