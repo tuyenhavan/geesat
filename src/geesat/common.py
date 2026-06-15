@@ -232,7 +232,9 @@ def export_img_to_googledrive(
         Returns:
             ee.Image: the clipped image with crs: 4326
     """
-    if isinstance(aoi, (ee.geometry.Geometry, list)):
+    if isinstance(aoi, ee.geometry.Geometry,):
+        aoi = aoi
+    if isinstance(aoi, list):
         aoi = ee.Geometry.Polygon(aoi)
     if isinstance(ds, ee.ImageCollection):
         # Convert it to an image
