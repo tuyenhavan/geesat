@@ -829,13 +829,13 @@ def extract_raster_values_by_polygons(
         try:
             if polygon.crs != "EPSG:4326":
                 polygon = polygon.to_crs("EPSG:4326")
-            polygon = common.gdf_to_ee(polygon)
+                polygon = common.gdf_to_ee(polygon)
+            else:
+                polygon = common.gdf_to_ee(polygon)
         except Exception as e:
             raise TypeError(
                 "Unsupported data type. It only supports ee.FeatureCollection or geopandas dataframe"
             ) from e
-    if to_gdf:
-        from shapely.geometry import shape
     if aggregate_method.lower() in ["max", "maximum"]:
         method = ee.Reducer.max()
     elif aggregate_method.lower() in ["min", "minimum"]:
@@ -846,8 +846,9 @@ def extract_raster_values_by_polygons(
         method = ee.Reducer.median()
     else:
         method = ee.Reducer.mean()
+    if to_gdf:
+        from shapely.geometry import shape
 
-    # Function to extract raster values from a collection by polygons
     def extract_values(image):
         # Extract the date from the image
         date = image.date().format("YYYY-MM-dd")
@@ -875,6 +876,45 @@ def extract_raster_values_by_polygons(
         df = gpd.GeoDataFrame(data, geometry="geometry")
     else:
         df = pd.DataFrame(data)
+    return df
+
+
+def extract_raster_values_by_polygons_batch(
+    col, polygon, scale=1000, aggregate_method="mean", to_gdf=False, batch_size=4000
+):
+    """Extract raster values by polygons in batches to handle large datasets.
+    Args:
+        col (ee.ImageCollection|ee.Image): The input image collection or image.
+        polygon (gpd.GeoDataFrame): The input polygons.
+        scale (int|float, optional): The spatial resolution in meters. Defaults to 1000.
+        aggregate_method (str, optional): The aggregation method. Defaults to "mean".
+            Supported methods: 'max', 'min', 'mean', 'median', 'sum'.
+        to_gdf (bool, optional): Whether to return a GeoDataFrame. Defaults to False.
+        batch_size (int, optional): The number of features to process in each batch. Defaults to 4000.
+    Returns:
+        pd.DataFrame|gpd.GeoDataFrame: DataFrame or GeoDataFrame containing extracted raster values.
+    """
+    if not isinstance(col, (ee.ImageCollection, ee.Image)):
+        raise TypeError(
+            "Unsupported data type. It only supports ee.ImageCollection or ee.Image"
+        )
+    if not isinstance(polygon, gpd.GeoDataFrame):
+        raise TypeError("Unsupported data type. It only supports geopandas dataframe")
+    dlist = []
+    for batch in range(0, len(polygon), batch_size):
+        start = batch
+        end = batch + batch_size
+        roi = polygon.iloc[start:end]
+        if len(roi) == 0:
+            continue
+        batch_result = extract_raster_values_by_polygons(
+            col, roi, scale, aggregate_method, to_gdf
+        )
+        dlist.append(batch_result)
+    if to_gdf:
+        df = gpd.pd.concat(dlist, ignore_index=True)
+    else:
+        df = pd.concat(dlist, ignore_index=True)
     return df
 
 
