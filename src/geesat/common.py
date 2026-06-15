@@ -1,3 +1,5 @@
+import os
+import shutil
 from datetime import datetime, timedelta
 
 import ee
@@ -34,20 +36,30 @@ def list_files(directory, ext=None):
     return flist
 
 
-def authenticate_gee(auth_mode=None, reset_credentials=False):
+def authenticate_gee(auth_mode=None, reset_credentials=False, project_id=None):
     """Authenticate and initialize Earth Engine API.
     Args:
         auth_mode (str, optional): The authentication mode. Defaults to None.
         reset_credentials (bool, optional): Whether to reset existing credentials. Defaults to False.
+        project_id (str, optional): The GEE project ID. Defaults to None.
     """
-    import os
-
-    if reset_credentials:
-        credential_path = os.path.expanduser("~/.config/earthengine/credentials")
-        if os.path.exists(credential_path):
-            os.remove(credential_path)
-    ee.Authenticate(auth_mode=auth_mode)
-    ee.Initialize()
+    try:
+        if reset_credentials:
+            credential_path = os.path.expanduser("~/.config/earthengine/credentials")
+            if os.path.exists(credential_path):
+                os.remove(credential_path)
+        if auth_mode is None:
+            auth_mode = "gcloud" if shutil.which("gcloud") else "localhost"
+        ee.Authenticate(auth_mode=auth_mode, force=True)
+        if project_id is not None:
+            ee.Initialize(project=project_id)
+        else:
+            ee.Initialize()
+    except Exception as auth_error:
+        print(
+            "Authentication failed. Please enter your project ID and try again. If you don't have a project ID, you can create one in the Google Cloud Console. If still failed, please reset_credentials to True and try again."
+        )
+        raise auth_error
 
 
 def geedate_to_python_datetime(date_code):
@@ -232,7 +244,10 @@ def export_img_to_googledrive(
         Returns:
             ee.Image: the clipped image with crs: 4326
     """
-    if isinstance(aoi, ee.geometry.Geometry,):
+    if isinstance(
+        aoi,
+        ee.geometry.Geometry,
+    ):
         aoi = aoi
     if isinstance(aoi, list):
         aoi = ee.Geometry.Polygon(aoi)
