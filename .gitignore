@@ -2,7 +2,7 @@
 *.log
 tests/
 data/
-notebooks/00_test_notebook.ipynb
+/notebooks/00_test_notebok.ipynb
 .vscode/
 __pycache__/
 *.pyc
