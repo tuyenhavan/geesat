@@ -360,3 +360,44 @@ def get_utm_zone_from_longlat(longitude, latitude):
     zone = zone_code[:-1]
     epsg_code = f"EPSG:326{zone}" if hemisphere == "N" else f"EPSG:327{zone}"
     return {"zone": zone_code, "epsg": epsg_code}
+
+
+def generate_buffer(gdf, buffer_distance=50, crs=None):
+    """
+    Generate a buffer around geometries in a GeoDataFrame.
+
+    Parameters:
+    -----------
+    gdf : geopandas.GeoDataFrame
+        Input GeoDataFrame containing geometries.
+    buffer_distance : float
+        Distance to buffer the geometries (in the same units as the CRS of the GeoDataFrame).
+
+    Returns:
+    --------
+    geopandas.GeoDataFrame
+        A new GeoDataFrame with buffered geometries.
+    """
+    if not isinstance(gdf, gpd.GeoDataFrame):
+        raise TypeError("Input must be a GeoDataFrame.")
+
+    # Create a copy of the GeoDataFrame to avoid modifying the original
+    buffered_gdf = gdf.copy()
+    original_crs = buffered_gdf.crs
+    if crs is not None:
+        buffered_gdf = buffered_gdf.to_crs(crs)
+    else:
+        if buffered_gdf.crs.to_epsg() == 4326:
+            x = buffered_gdf.geometry.x.values[0]
+            y = buffered_gdf.geometry.y.values[0]
+            utm_info = get_utm_zone_from_longlat(x, y)["epsg"]
+            buffered_gdf = buffered_gdf.to_crs(utm_info)
+        else:
+            raise ValueError(
+                "The GeoDataFrame must have a valid CRS. Please provide a CRS or ensure the GeoDataFrame has a valid CRS."
+            )
+
+    # Apply buffer to each geometry
+    buffered_gdf["geometry"] = buffered_gdf["geometry"].buffer(buffer_distance)
+
+    return buffered_gdf.to_crs(original_crs)
