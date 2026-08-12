@@ -379,7 +379,7 @@ def cloud_mask(col, from_bit, to_bit, qa_band_name, threshold=1):
     return cloudless_col
 
 
-def generate_modis_cloud_mask(col, from_bit, to_bit, qa_band="DetailedQA", threshold=1):
+def generate_modis_cloud_mask(col, from_bit=0, to_bit=1, qa_band="DetailedQA", threshold=1):
     """Return a collection of MODIS cloud-free images
 
     Args:
@@ -1229,19 +1229,20 @@ def generate_nday_composite(col, aggregate_method="mean", n_days=10):
     return composite_col
 
 
-def generate_monthly_anomaly_index(col, scale=1):
+def generate_monthly_anomaly_index(col, scaling_factor=None):
     """Return a collection of monthly vegetation anomaly index.
 
     Args:
         col (ee.ImageCollection): The input image collection.
-        scale (int|float|optional): Scaling factor
+        scaling_factor (int|float|optional): Scaling factor
 
     Returns:
         ee.ImageCollection: The output collection with vegetation Anomaly Index (VAI).
     """
     if not isinstance(col, ee.ImageCollection):
         raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")
-    col = generate_scaled_data(col, scale)
+    if scaling_factor is not None:
+        col = generate_scaled_data(col, scaling_factor)
 
     first_date, latest_date = date_range_col(col)
     monthly_list = monthly_datetime_list(first_date, latest_date)
@@ -1254,8 +1255,12 @@ def generate_monthly_anomaly_index(col, scale=1):
         subcol = col.filterDate(start_time, last_time)
         size = subcol.size()
         mean = col_month.mean()
+        std = col_month.reduce(ee.Reducer.stdDev())
         anomaly = (
-            subcol.max().subtract(mean).set({"system:time_start": start_time.millis()})
+            subcol.mean()
+            .subtract(mean)
+            .divide(std)
+            .set({"system:time_start": start_time.millis()})
         )
         return ee.Algorithms.If(size.gt(0), anomaly.rename("VAI"))
 
@@ -1268,10 +1273,9 @@ def generate_monthly_vci(col):
 
     Args:
         col (ee.ImageCollection): The input image collection.
-        scale (int|float|optional): Scaling factor
 
     Returns:
-        ee.ImageCollection: The output collection with vegetation Anomaly Index (VAI).
+        ee.ImageCollection: The output collection with vegetation Condition Index (VCI).
     """
     if not isinstance(col, ee.ImageCollection):
         raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")

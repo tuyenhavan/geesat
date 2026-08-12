@@ -1,9 +1,10 @@
 import math
 
 import ee
-from narwhals import col
 
 from geesat import geogee
+
+"""This module contains functions for processing Sentinel-1 SAR data, including masking, slope correction, and water occurrence generation. Most of the functions are adapted from https://www.mdpi.com/2072-4292/12/11/1867"""
 
 
 def mask_angle(image):

@@ -1,12 +1,21 @@
 import os
 import shutil
 from datetime import datetime, timedelta
+from tkinter import Y
 
 import ee
 import geopandas as gpd
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from shapely.geometry import mapping
+import requests
+import rasterio
+from rasterio.io import MemoryFile
+from functools import partial
+from shapely.geometry import box
+import numpy as np
+import rioxarray as rxr
+import xarray as xr
 
 
 def list_files(directory, ext=None):
@@ -23,7 +32,8 @@ def list_files(directory, ext=None):
     import os
 
     if not os.path.isdir(directory):
-        raise ValueError(f"The provided path '{directory}' is not a valid directory.")
+        raise ValueError(
+            f"The provided path '{directory}' is not a valid directory.")
     flist = []
     for root, _, files in os.walk(directory):
         for file in files:
@@ -45,7 +55,8 @@ def authenticate_gee(auth_mode=None, reset_credentials=False, project_id=None):
     """
     try:
         if reset_credentials:
-            credential_path = os.path.expanduser("~/.config/earthengine/credentials")
+            credential_path = os.path.expanduser(
+                "~/.config/earthengine/credentials")
             if os.path.exists(credential_path):
                 os.remove(credential_path)
         if auth_mode is None:
@@ -152,7 +163,8 @@ def weekly_date_list(start_year, start_month, start_day, number_of_week=52):
             f"year {start_year}, month {start_month}, and day {start_day} must all be integers."
         )
     first_date = datetime(start_year, start_month, start_day)
-    week_list = [first_date + i * timedelta(weeks=1) for i in range(number_of_week)]
+    week_list = [first_date + i *
+                 timedelta(weeks=1) for i in range(number_of_week)]
     return week_list
 
 
@@ -169,7 +181,8 @@ def monthly_date_list(start_year, start_month, start_day, number_of_month=12):
         lsit: A list of monthly dates.
     """
     first_date = datetime(start_year, start_month, start_day)
-    month_list = [first_date + relativedelta(months=i) for i in range(number_of_month)]
+    month_list = [first_date +
+                  relativedelta(months=i) for i in range(number_of_month)]
     return month_list
 
 
@@ -401,3 +414,172 @@ def generate_buffer(gdf, buffer_distance=50, crs=None):
     buffered_gdf["geometry"] = buffered_gdf["geometry"].buffer(buffer_distance)
 
     return buffered_gdf.to_crs(original_crs)
+
+
+def export_gee_image(image, aoi, outfile=None, resolution=10, bands=None, compress='LZW', tiled=True, dtype=None, crs='EPSG:4326'):
+    """ Export an Earth Engine image to a GeoTIFF file.
+
+    Args:
+        image (ee.Image): The Earth Engine image to export.
+        aoi (ee.Geometry or gpd.GeoDataFrame): The area of interest to clip the image.
+        outfile (str): The path to the output GeoTIFF file.
+        resolution (int, optional): The spatial resolution of the output image in meters. Defaults to 10.
+        bands (list, optional): A list of band names to export. If None, all bands will be exported. Defaults to None.
+        compress (str, optional): The compression method to use for the output GeoTIFF. Defaults to 'LZW'.
+        tiled (bool, optional): Whether to create a tiled GeoTIFF. Defaults to True
+        dtype (str, optional): The data type for the output GeoTIFF. If None, the data type will be inferred from the image. Defaults to None.
+    Returns:
+        None
+    """
+    if isinstance(image, ee.ImageCollection):
+        image = image.toBands()
+        old_bands = image.bandNames().getInfo()
+        new_bands = ["_".join(i.split("_")[::-1]) for i in old_bands]
+        image = image.select(old_bands, new_bands)
+    if bands is not None:
+        image = image.select(bands)
+    else:
+        bands = image.bandNames().getInfo()
+    if isinstance(aoi, gpd.GeoDataFrame):
+        if aoi.crs is None:
+            raise ValueError("The GeoDataFrame must have a defined CRS.")
+        aoi = aoi.to_crs("EPSG:4326")
+        aoi = gdf_to_ee(aoi)
+    aoi = aoi.geometry().transform("EPSG:4326")
+    sat_name = os.path.basename(outfile).split(
+        '.')[0] if outfile is not None else "GEE_Image"
+    url = image.getDownloadURL({
+        "name": sat_name,
+        "bands": bands,
+        "region": aoi,
+        "scale": resolution,
+        "format": "GEO_TIFF",
+        'crs': crs
+    })
+    response = requests.get(url)
+    response.raise_for_status()
+    with MemoryFile(response.content) as memfile:
+        with memfile.open() as src:
+            meta = src.meta.copy()
+            data = src.read()
+            predictor = 3 if src.dtypes[0].startswith('float') else 2
+            if dtype is not None:
+                meta.update({"dtype": dtype})
+                data = data.astype(dtype)
+            meta.update({
+                "driver": "GTiff",
+                "compress": compress,
+                "tiled": tiled,
+                'predictor': predictor,
+            })
+            if outfile is None:
+                # create x and y coordinates based on the transform
+                transform = src.transform
+                width = src.width
+                height = src.height
+                x_coords = [(transform * (i + 0.5, 0))[0]
+                            for i in range(width)]
+                y_coords = [(transform * (0, j + 0.5))[1]
+                            for j in range(height)]
+                outds = xr.DataArray(
+                    data,
+                    dims=("band", "y", "x"),
+                    coords={"band": bands, "x": x_coords, "y": y_coords},
+                    name=sat_name,
+                )
+                if src.nodata is not None:
+                    outds.rio.write_nodata(src.nodata, inplace=True)
+                outds.rio.write_crs(crs, inplace=True)
+                return outds
+            else:
+                with rasterio.open(outfile, 'w', **meta) as dst:
+                    dst.write(src.read())
+                    return None
+
+
+def generate_geopandas_from_bbox(bbox, crs="EPSG:4326"):
+    """
+    Create a GeoDataFrame from a bounding box.
+
+    Parameters
+    ----------
+    bbox : list or tuple
+        Bounding box in the format [minx, miny, maxx, maxy].
+    crs : str, optional
+        Coordinate reference system for the GeoDataFrame (default is "EPSG:4326").
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        A GeoDataFrame containing a single polygon representing the bounding box.
+    """
+
+    if not isinstance(bbox, (list, tuple)):
+        raise TypeError("Bounding box must be a list or tuple.")
+    bbox = list(bbox)
+    # if bbox is only 4 numbers and if a nested list with 4 numbers
+    if all(isinstance(coord, (int, float)) for coord in bbox):
+        geom = box(*bbox)
+        gdf = gpd.GeoDataFrame(geometry=[geom], crs=crs)
+        gdf["codes"] = [f"A{i:02d}" for i in range(len(gdf))]
+        return gdf
+    else:
+        geoms = [box(*b) for b in bbox if isinstance(b,
+                                                     (list, tuple)) and len(b) == 4]
+        gdf = gpd.GeoDataFrame(geometry=geoms, crs=crs)
+        gdf["codes"] = [f"A{i:02d}" for i in range(len(gdf))]
+        return gdf
+
+
+def generate_bbox_by_mercantile(gdf, zoom=12, to_gdf=False):
+    """
+    Generate bounding boxes using Mercator tiles over a given geometry or bounding box.
+
+    Parameters
+    ----------
+    gdf : GeoDataFrame, GeoSeries, list, tuple, or np.ndarray
+        Input geometry or bounding box.
+        - If GeoDataFrame or GeoSeries, it will be reprojected to EPSG:4326 if necessary.
+        - If list/tuple/ndarray, it should be in [minx, miny, maxx, maxy] format.
+    zoom : int, optional
+        Zoom level to generate tiles (default is 12).
+    to_gdf : bool, optional
+        If True, returns the result as a GeoDataFrame (default is False).
+    Returns
+    -------
+    list or geopandas.GeoDataFrame
+        A list of bounding boxes or a GeoDataFrame of bounding boxes in EPSG:4326.
+    """
+    import mercantile
+
+    if isinstance(gdf, (gpd.GeoDataFrame, gpd.GeoSeries)):
+        if gdf.crs is None:
+            raise ValueError("GeoDataFrame/GeoSeries must have a defined CRS.")
+        if gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
+        bbox = gdf.total_bounds
+    elif isinstance(gdf, (list, tuple, np.ndarray)):
+        if len(gdf) != 4:
+            raise ValueError(
+                "Bounding box must have exactly 4 elements: [minx, miny, maxx, maxy]"
+            )
+        bbox = list(gdf)
+    else:
+        raise TypeError(
+            "Input must be a GeoDataFrame, GeoSeries, or bounding box in list/tuple/ndarray format."
+        )
+
+    tile_generator = partial(mercantile.tiles, zooms=zoom)
+    tiles = tile_generator(*bbox)
+    dlist = []
+    for tile in tiles:
+        tile_bounds = mercantile.bounds(tile)
+        tile_box = box(*tile_bounds)
+        # only keep tiles that intersect with the aoi
+        if isinstance(gdf, (gpd.GeoDataFrame, gpd.GeoSeries)):
+            if not gdf.intersects(tile_box).any():
+                continue
+        dlist.append(tile_box.bounds)  # (minx, miny, maxx, maxy)
+    if to_gdf:
+        return generate_geopandas_from_bbox(dlist, crs="EPSG:4326")
+    return dlist
