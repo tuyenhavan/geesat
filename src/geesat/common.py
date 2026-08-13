@@ -416,20 +416,26 @@ def generate_buffer(gdf, buffer_distance=50, crs=None):
     return buffered_gdf.to_crs(original_crs)
 
 
-def export_gee_image(image, aoi, outfile=None, resolution=10, bands=None, compress='LZW', tiled=True, dtype=None, crs='EPSG:4326'):
+def export_gee_image(image, aoi, outfile=None, resolution=10,
+                     bands=None, compress='LZW',
+                     tiled=True, dtype=None, crs='EPSG:4326'):
     """ Export an Earth Engine image to a GeoTIFF file.
 
     Args:
         image (ee.Image): The Earth Engine image to export.
         aoi (ee.Geometry or gpd.GeoDataFrame): The area of interest to clip the image.
-        outfile (str): The path to the output GeoTIFF file.
+        outfile (str, optional): The path to the output GeoTIFF file. Defaults to None, 
+        which will return an xarray.DataArray instead of writing to a file.
         resolution (int, optional): The spatial resolution of the output image in meters. Defaults to 10.
         bands (list, optional): A list of band names to export. If None, all bands will be exported. Defaults to None.
         compress (str, optional): The compression method to use for the output GeoTIFF. Defaults to 'LZW'.
         tiled (bool, optional): Whether to create a tiled GeoTIFF. Defaults to True
         dtype (str, optional): The data type for the output GeoTIFF. If None, the data type will be inferred from the image. Defaults to None.
+        crs (str, optional): The coordinate reference system for the output image. Defaults to 'EPSG:4326'.
     Returns:
-        None
+        None or xarray.DataArray: If outfile is None, 
+        returns an xarray.DataArray containing the exported image data.
+        Otherwise, writes the image to the specified GeoTIFF file.
     """
     if isinstance(image, ee.ImageCollection):
         image = image.toBands()
@@ -443,9 +449,14 @@ def export_gee_image(image, aoi, outfile=None, resolution=10, bands=None, compre
     if isinstance(aoi, gpd.GeoDataFrame):
         if aoi.crs is None:
             raise ValueError("The GeoDataFrame must have a defined CRS.")
-        aoi = aoi.to_crs("EPSG:4326")
+        if aoi.crs.to_epsg() != 4326:
+            aoi = aoi.to_crs("EPSG:4326")
         aoi = gdf_to_ee(aoi)
-    aoi = aoi.geometry().transform("EPSG:4326")
+    elif isinstance(aoi, ee.featurecollection.FeatureCollection):
+        aoi = aoi.geometry().transform("EPSG:4326")
+    elif isinstance(aoi, ee.geometry.Geometry):
+        aoi = aoi.transform("EPSG:4326")
+
     sat_name = os.path.basename(outfile).split(
         '.')[0] if outfile is not None else "GEE_Image"
     url = image.getDownloadURL({
@@ -462,15 +473,19 @@ def export_gee_image(image, aoi, outfile=None, resolution=10, bands=None, compre
         with memfile.open() as src:
             meta = src.meta.copy()
             data = src.read()
-            predictor = 3 if src.dtypes[0].startswith('float') else 2
             if dtype is not None:
-                meta.update({"dtype": dtype})
                 data = data.astype(dtype)
+                meta.update({"dtype": dtype})
+            else:
+                dtype = src.dtypes[0]
+            predictor = 3 if np.issubdtype(dtype, np.floating) else 2
             meta.update({
                 "driver": "GTiff",
                 "compress": compress,
                 "tiled": tiled,
                 'predictor': predictor,
+                'BIGTIFF': 'IF_SAFER',
+                "crs": crs
             })
             if outfile is None:
                 # create x and y coordinates based on the transform
