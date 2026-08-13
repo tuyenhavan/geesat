@@ -191,10 +191,12 @@ def generate_sentinel1_indices(col):
         img = img.select(["VV", "VH"])
         # 4 × VH / (VV + VH)
         rvi = img.expression(
-            "4 * VH / (VV + VH)", {"VV": img.select("VV"), "VH": img.select("VH")}
+            "4 * VH / (VV + VH)", {"VV": img.select("VV"),
+                                   "VH": img.select("VH")}
         ).rename("RVI")
         # vh/vv ratio
-        vh_vv_ratio = img.select("VH").divide(img.select("VV")).rename("VH_VV_Ratio")
+        vh_vv_ratio = img.select("VH").divide(
+            img.select("VV")).rename("VH_VV_Ratio")
         return img.addBands([rvi, vh_vv_ratio]).copyProperties(
             img, ["system:time_start"]
         )
@@ -243,7 +245,8 @@ def generate_landsat_indices(aoi, start_date="2020-10-01", end_date="2023-12-31"
 
     def add_indices(image):
         img = (
-            image.select(["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6"])
+            image.select(["SR_B1", "SR_B2", "SR_B3",
+                         "SR_B4", "SR_B5", "SR_B6"])
             .multiply(0.0000275)
             .add(-0.2)
         )
@@ -393,7 +396,8 @@ def generate_modis_cloud_mask(col, from_bit=0, to_bit=1, qa_band="DetailedQA", t
         ee.ImageCollection: The output collection with cloud-free pixels.
     """
     if not isinstance(col, ee.ImageCollection):
-        raise TypeError("Unsupported data type. It only supports ee.ImageCollection")
+        raise TypeError(
+            "Unsupported data type. It only supports ee.ImageCollection")
     out_col = cloud_mask(col, from_bit, to_bit, qa_band, threshold)
     return out_col
 
@@ -401,7 +405,7 @@ def generate_modis_cloud_mask(col, from_bit=0, to_bit=1, qa_band="DetailedQA", t
 def generate_landsat_cloud_mask(collection):
     """
     Applies a cloud and cloud shadow mask to a Landsat ImageCollection using the QA_PIXEL band.
-    
+
     The function removes pixels flagged as clouds or cloud shadows based on the QA_PIXEL band
     in Landsat imagery. This function mainly works with Landsat 8 and 9 level 2 collection 2 tier 1 data.
 
@@ -427,13 +431,14 @@ def generate_landsat_cloud_mask(collection):
         cloud_bit = 1 << 5  # Bit 5: Cloud
 
         qa = image.select("QA_PIXEL")
-        mask = qa.bitwiseAnd(cloud_shadow_bit).eq(0).And(qa.bitwiseAnd(cloud_bit).eq(0))
+        mask = qa.bitwiseAnd(cloud_shadow_bit).eq(
+            0).And(qa.bitwiseAnd(cloud_bit).eq(0))
         return image.updateMask(mask)
 
     return collection.map(mask_clouds)
 
 
-def generate_sen2_cloud_mask(
+def generate_sen2sr_cloud_mask(
     aoi,
     start_date,
     end_date,
@@ -635,7 +640,8 @@ def convert_landsat_lst_to_celsius(collection, roi=None, band="ST_10"):
     def to_celsius(image):
         """Converts the specified thermal band from Kelvin to Celsius."""
         lst_celsius = (
-            image.select(band).multiply(0.00341802).subtract(273.15).rename("lst")
+            image.select(band).multiply(
+                0.00341802).subtract(273.15).rename("lst")
         )  # Rename for clarity
         return image.addBands(lst_celsius).copyProperties(image, ["system:time_start"])
 
@@ -657,7 +663,8 @@ def generate_kelvin_to_celsius(col):
         )
     elif isinstance(col, ee.ImageCollection):
         out_data = col.map(
-            lambda img: img.subtract(273.15).copyProperties(img, img.propertyNames())
+            lambda img: img.subtract(273.15).copyProperties(
+                img, img.propertyNames())
         )
     else:
         out_data = col
@@ -726,10 +733,12 @@ def generate_resample_collection(col, resample_method=None, scale=None, crs=None
     ):
         raise TypeError("Unsupported data type in crs and scale!")
     if isinstance(col, ee.Image):
-        data = ee.Image(col).resample(resample_method).reproject(crs=crs, scale=scale)
+        data = ee.Image(col).resample(
+            resample_method).reproject(crs=crs, scale=scale)
     elif isinstance(col, ee.ImageCollection):
         data = col.map(
-            lambda img: img.resample(resample_method).reproject(crs=crs, scale=scale)
+            lambda img: img.resample(
+                resample_method).reproject(crs=crs, scale=scale)
         )
     else:
         raise TypeError("Unsupported data type!")
@@ -747,7 +756,8 @@ def date_range_col(col):
     """
     first_date = ee.Date(col.first().get("system:time_start"))
     latest_date = ee.Date(
-        col.limit(1, "system:time_start", False).first().get("system:time_start")
+        col.limit(1, "system:time_start", False).first().get(
+            "system:time_start")
     )
     return first_date, latest_date
 
@@ -899,7 +909,8 @@ def extract_raster_values_by_polygons_batch(
             "Unsupported data type. It only supports ee.ImageCollection or ee.Image"
         )
     if not isinstance(polygon, gpd.GeoDataFrame):
-        raise TypeError("Unsupported data type. It only supports geopandas dataframe")
+        raise TypeError(
+            "Unsupported data type. It only supports geopandas dataframe")
     dlist = []
     for batch in range(0, len(polygon), batch_size):
         start = batch
@@ -1047,9 +1058,11 @@ def generate_monthly_composite(col, aggregate_method=None):
         ee.ImageCollection: A output image collection of monthly images.
     """
     if not isinstance(col, ee.ImageCollection):
-        raise TypeError("Unsupported data type. Expected data is ee.ImageCollection")
+        raise TypeError(
+            "Unsupported data type. Expected data is ee.ImageCollection")
     if not isinstance(aggregate_method, (str, type(None))):
-        raise TypeError("Unsupported data type. Aggregate method should be string")
+        raise TypeError(
+            "Unsupported data type. Aggregate method should be string")
     if aggregate_method is None:
         aggregate_method = "max"
     aggregate_method = aggregate_method.lower().strip()
@@ -1068,18 +1081,24 @@ def generate_monthly_composite(col, aggregate_method=None):
         size = monthly_col.size()
 
         if aggregate_method == "mean":
-            img = monthly_col.mean().set({"system:time_start": start_date.millis()})
+            img = monthly_col.mean().set(
+                {"system:time_start": start_date.millis()})
         elif aggregate_method == "max":
-            img = monthly_col.max().set({"system:time_start": start_date.millis()})
+            img = monthly_col.max().set(
+                {"system:time_start": start_date.millis()})
         elif aggregate_method == "min":
-            img = monthly_col.min().set({"system:time_start": start_date.millis()})
+            img = monthly_col.min().set(
+                {"system:time_start": start_date.millis()})
         elif aggregate_method in ["median", "mvc"]:
-            img = monthly_col.median().set({"system:time_start": start_date.millis()})
+            img = monthly_col.median().set(
+                {"system:time_start": start_date.millis()})
         else:
-            img = monthly_col.sum().set({"system:time_start": start_date.millis()})
+            img = monthly_col.sum().set(
+                {"system:time_start": start_date.millis()})
         return ee.Algorithms.If(size.gt(0), img)
 
-    composite_col = ee.ImageCollection.fromImages(monthly_list.map(monthly_data))
+    composite_col = ee.ImageCollection.fromImages(
+        monthly_list.map(monthly_data))
     return composite_col
 
 
@@ -1102,7 +1121,8 @@ def generate_daily_composite(ds, aggregate_method="max"):
     )
     end_date = ee.Date(
         ee.Date(
-            ds.sort("system:time_start", False).first().get("system:time_start")
+            ds.sort("system:time_start", False).first().get(
+                "system:time_start")
         ).format("YYYY-MM-dd")
     )
 
@@ -1124,7 +1144,8 @@ def generate_daily_composite(ds, aggregate_method="max"):
         elif aggregate_method in ["min", "minimum"]:
             img = subcol.min().set({"system:time_start": first_date.millis()})
         elif aggregate_method in ["median"]:
-            img = subcol.median().set({"system:time_start": first_date.millis()})
+            img = subcol.median().set(
+                {"system:time_start": first_date.millis()})
         elif aggregate_method in ["sum", "total"]:
             img = subcol.sum().set({"system:time_start": first_date.millis()})
 
@@ -1153,14 +1174,16 @@ def generate_weekly_composite(ds, aggregate_method="max"):
     )
     end_date = ee.Date(
         ee.Date(
-            ds.sort("system:time_start", False).first().get("system:time_start")
+            ds.sort("system:time_start", False).first().get(
+                "system:time_start")
         ).format("YYYY-MM-dd")
     )
 
     # Number of weeks
     total_days = end_date.difference(start_date, "week").ceil()
     wlist = ee.List.sequence(0, total_days.subtract(1))
-    week_start_dates = wlist.map(lambda i: start_date.advance(ee.Number(i), "week"))
+    week_start_dates = wlist.map(
+        lambda i: start_date.advance(ee.Number(i), "week"))
 
     def sub_col(date_input):
         first_date = ee.Date(date_input)
@@ -1173,7 +1196,8 @@ def generate_weekly_composite(ds, aggregate_method="max"):
         elif aggregate_method in ["min", "minimum"]:
             img = subcol.min().set({"system:time_start": first_date.millis()})
         elif aggregate_method in ["median"]:
-            img = subcol.median().set({"system:time_start": first_date.millis()})
+            img = subcol.median().set(
+                {"system:time_start": first_date.millis()})
         elif aggregate_method in ["sum", "total"]:
             img = subcol.sum().set({"system:time_start": first_date.millis()})
         else:
@@ -1240,7 +1264,8 @@ def generate_monthly_anomaly_index(col, scaling_factor=None):
         ee.ImageCollection: The output collection with vegetation Anomaly Index (VAI).
     """
     if not isinstance(col, ee.ImageCollection):
-        raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")
+        raise TypeError(
+            "Unsupported data type. Please provide ee.ImageCollection.")
     if scaling_factor is not None:
         col = generate_scaled_data(col, scaling_factor)
 
@@ -1251,7 +1276,8 @@ def generate_monthly_anomaly_index(col, scaling_factor=None):
         start_time = ee.Date(date)
         set_month = ee.Number.parse(start_time.format("MM"))
         last_time = start_time.advance(1, "month")
-        col_month = col.filter(ee.Filter.calendarRange(set_month, set_month, "month"))
+        col_month = col.filter(ee.Filter.calendarRange(
+            set_month, set_month, "month"))
         subcol = col.filterDate(start_time, last_time)
         size = subcol.size()
         mean = col_month.mean()
@@ -1278,7 +1304,8 @@ def generate_monthly_vci(col):
         ee.ImageCollection: The output collection with vegetation Condition Index (VCI).
     """
     if not isinstance(col, ee.ImageCollection):
-        raise TypeError("Unsupported data type. Please provide ee.ImageCollection.")
+        raise TypeError(
+            "Unsupported data type. Please provide ee.ImageCollection.")
 
     first_date, latest_date = date_range_col(col)
     monthly_list = monthly_datetime_list(first_date, latest_date)
@@ -1287,7 +1314,8 @@ def generate_monthly_vci(col):
         start_time = ee.Date(date)
         set_month = ee.Number.parse(start_time.format("MM"))
         last_time = start_time.advance(1, "month")
-        col_month = col.filter(ee.Filter.calendarRange(set_month, set_month, "month"))
+        col_month = col.filter(ee.Filter.calendarRange(
+            set_month, set_month, "month"))
         subcol = col.filterDate(start_time, last_time)
         size = subcol.size()
         min_value = col_month.min()
@@ -1298,8 +1326,133 @@ def generate_monthly_vci(col):
             .divide(max_value.subtract(min_value))
             .multiply(100)
         )
-        vci_img = vci_img.set({"system:time_start": start_time.millis()}).rename("VCI")
+        vci_img = vci_img.set(
+            {"system:time_start": start_time.millis()}).rename("VCI")
         return ee.Algorithms.If(size.gt(0), vci_img)
 
     vci_col = ee.ImageCollection.fromImages(monthly_list.map(vci))
     return vci_col
+
+
+def generate_sen2toa_cloud_mask(
+    aoi,
+    start_date,
+    end_date,
+    cloud_filter=50,
+    cld_prb_thresh=40,
+    nir_drk_thresh=0.3,
+    ndwi_thresh=0.1,
+    cld_prj_dist=2,
+    buffer=50
+):
+    """
+    Generate a Sentinel-2 TOA image collection with cloud and shadow masking.
+        Args:
+            aoi (gpd.GeoDataFrame|ee.Geometry): Area of interest for filtering the image collection.
+            start_date (str): Start date for filtering the image collection (format: 'YYYY-MM-DD').
+            end_date (str): End date for filtering the image collection (format: 'YYYY-MM-DD').
+            cloud_filter (int, optional): Maximum cloud coverage percentage for filtering images. Defaults to 50.
+            cld_prb_thresh (int, optional): Cloud probability threshold for cloud masking. Defaults to 40.
+            nir_drk_thresh (float, optional): NIR darkness threshold for shadow masking. Defaults to 0.3.
+            ndwi_thresh (float, optional): NDWI threshold for water masking. Defaults to 0.1.
+            cld_prj_dist (int, optional): Cloud projection distance for shadow masking. Defaults to 2.
+            buffer (int, optional): Buffer distance for cloud and shadow masking. Defaults to 50.
+        Returns:
+            ee.ImageCollection: scaled Sentinel-2 TOA image collection with cloud and shadow masking applied.
+    """
+    if isinstance(aoi, gpd.GeoDataFrame):
+        if aoi.crs != "EPSG:4326":
+            aoi = aoi.to_crs("EPSG:4326")
+        aoi = common.gdf_to_ee(aoi)
+
+    def get_s2_toa_cld_col():
+        s2_toa_col = (
+            ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+            .filterBounds(aoi)
+            .filterDate(start_date, end_date)
+            .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', cloud_filter))
+        )
+
+        s2_cloudless_col = (
+            ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+            .filterBounds(aoi)
+            .filterDate(start_date, end_date)
+        )
+
+        # linkCollection safely attaches 'probability' directly onto
+        # each TOA image — avoids null-join issues from manual joins
+        return s2_toa_col.linkCollection(s2_cloudless_col, ['probability'])
+
+    def add_cloud_bands(img):
+        cld_prb = img.select('probability')
+        is_cloud = cld_prb.gt(cld_prb_thresh).rename('clouds')
+        return img.addBands(is_cloud)
+
+    def add_shadow_bands(img):
+        ndwi = img.normalizedDifference(['B3', 'B8'])
+        not_water = ndwi.lt(ndwi_thresh)
+
+        # NIR + SWIR1 darkness together — more reliable than NIR alone
+        dark_pixels = (
+            img.select('B8').lt(nir_drk_thresh * 1e4)
+            .And(img.select('B11').lt(nir_drk_thresh * 1e4))
+            .multiply(not_water)
+            .rename('dark_pixels')
+        )
+
+        shadow_azimuth = ee.Number(90).subtract(
+            ee.Number(img.get('MEAN_SOLAR_AZIMUTH_ANGLE'))
+        )
+
+        cld_proj = (
+            img.select('clouds')
+            .directionalDistanceTransform(shadow_azimuth, cld_prj_dist * 10)
+            .select('distance')
+            .mask()
+            .rename('cloud_transform')
+        )
+
+        shadows = cld_proj.multiply(dark_pixels).rename('shadows')
+        return img.addBands(ee.Image([dark_pixels, cld_proj, shadows]))
+
+    def add_cld_shdw_mask(img):
+        img_cloud = add_cloud_bands(img)
+        img_cloud_shadow = add_shadow_bands(img_cloud)
+
+        is_cld_shdw = (
+            img_cloud_shadow.select('clouds')
+            .add(img_cloud_shadow.select('shadows'))
+            .gt(0)
+        )
+
+        # Reproject to a metric CRS/scale BEFORE focal ops — without this,
+        # focalMin/focalMax run in degrees and the mask blows up to cover
+        # the whole AOI (this was the cause of the earlier all-NaN bug)
+        is_cld_shdw = (
+            is_cld_shdw
+            .reproject(crs=img.select('B8').projection(), scale=20)
+            .focalMin(2).focalMax(buffer * 2 / 20)
+            .rename('cloudmask')
+        )
+
+        return img_cloud_shadow.addBands(is_cld_shdw)
+
+    def apply_cld_shdw_mask(img):
+        not_cld_shdw = img.select('cloudmask').Not()
+        # Cast back to ee.Image explicitly — copyProperties() returns a
+        # generic ee.Element in the Python client, which breaks chained
+        # .select() calls downstream otherwise
+        return ee.Image(
+            img.select('B.*')
+            .updateMask(not_cld_shdw)
+            .divide(10000)
+            .copyProperties(img, ["system:time_start"])
+        )
+
+    s2_toa_cld_col = get_s2_toa_cld_col()
+
+    return (
+        s2_toa_cld_col
+        .map(add_cld_shdw_mask)
+        .map(apply_cld_shdw_mask)
+    )
