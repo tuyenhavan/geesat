@@ -1,6 +1,8 @@
 from datetime import datetime
+from typing import Type
 
 import ee
+import geesat
 import geopandas as gpd
 import pandas as pd
 
@@ -1456,3 +1458,95 @@ def generate_sen2toa_cloud_mask(
         .map(add_cld_shdw_mask)
         .map(apply_cld_shdw_mask)
     )
+
+
+def load_google_building_data(aoi, start_date='2023', end_date='2024', resolution=4):
+    """Load Google building data for a specified area of interest (AOI) and time range.
+    Args:
+        aoi (gpd.GeoDataFrame|ee.Geometry): Area of interest for filtering the building data.
+        start_date (str, optional): Start date for filtering the building data (format: 'YYYY'). Defaults to '2023'.
+        end_date (str, optional): End date for filtering the building data (format: 'YYYY'). Defaults to '2024'.
+        resolution (int, optional): Spatial resolution in meters. Defaults to 4.
+    Returns:
+        ee.FeatureCollection: A FeatureCollection containing building data with area and height attributes.
+    """
+    col = ee.ImageCollection(
+        'GOOGLE/Research/open-buildings-temporal/v1')
+    if isinstance(aoi, gpd.GeoDataFrame):
+        aoi = geesat.gdf_to_ee(aoi)
+    col = col.filterBounds(aoi).filterDate(start_date, end_date)
+    projection = col.first().projection()
+    mosaic = col.mosaic().setDefaultProjection(projection)
+    building_height = mosaic.select('building_height')
+    crs = building_height.projection().crs()
+    building_polygons = ee.FeatureCollection(
+        'GOOGLE/Research/open-buildings/v3/polygons')
+    building_polygons = building_polygons.filterBounds(aoi)
+
+    temporal_bands = mosaic.select(['building_presence', 'building_height'])
+    building_data = temporal_bands.reduceRegions(
+        collection=building_polygons,
+        reducer=ee.Reducer.max(),
+        scale=4,
+        tileScale=16)
+
+    building_data = building_data.filter(
+        ee.Filter.gt('building_presence', 0.5))
+    building_data = building_data.map(
+        lambda f: f.transform(crs, 0.1)
+    )
+    building_data = building_data.select(
+        ['area_in_meters', 'building_height'], ['area', 'height'])
+    return building_data
+
+
+def generate_standardized_data(image, lower_percentile=2, upper_percentile=98,
+                               region=None, scale=10, tile_scale=4):
+    """
+    Generate standardized data for an image by clipping each band to specified percentiles
+    and then standardizing it (subtract mean and divide by std) per band.
+
+    Args:
+        image (ee.Image): Input image to be standardized.
+        lower_percentile (int, optional): Lower percentile for clipping. Defaults to 2.
+        upper_percentile (int, optional): Upper percentile for clipping. Defaults to 98.
+        region (ee.Geometry, optional): Region over which to compute percentiles and statistics. Defaults to the image geometry.
+        scale (int, optional): Scale in meters for computations. Defaults to 10.
+        tile_scale (int, optional): Tile scale for computations. Defaults to 4.
+
+    Returns:
+        ee.Image: Standardized image with the same bands as the input.
+    """
+    if not isinstance(image, ee.Image):
+        raise TypeError("Input must be an ee.Image")
+    lo_p, hi_p = int(lower_percentile), int(upper_percentile)
+    bands = image.bandNames().getInfo()
+    if region is None:
+        region = image.geometry()
+    # 1) Percentile thresholds per band
+    pct = image.reduceRegion(
+        reducer=ee.Reducer.percentile([lo_p, hi_p]),
+        geometry=region, scale=scale, maxPixels=1e13, tileScale=tile_scale
+    )
+
+    # 2) Clip each band to [lo, hi]
+    def clip_band(b):
+        lo = ee.Number(pct.get(f"{b}_p{lo_p}"))
+        hi = ee.Number(pct.get(f"{b}_p{hi_p}"))
+        return image.select(b).max(lo).min(hi).rename(b)
+
+    clipped = ee.Image.cat([clip_band(b) for b in bands])
+
+    # 3) Mean and std of the clipped data
+    stats = clipped.reduceRegion(
+        reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+        geometry=region, scale=scale, maxPixels=1e13, tileScale=tile_scale
+    )
+
+    # 4) Standardize the clipped data
+    def zscore(b):
+        mu = ee.Number(stats.get(f"{b}_mean"))
+        sd = ee.Number(stats.get(f"{b}_stdDev"))
+        return clipped.select(b).subtract(mu).divide(sd).rename(b)
+
+    return ee.Image.cat([zscore(b) for b in bands])

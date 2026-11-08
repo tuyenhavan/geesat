@@ -512,6 +512,40 @@ def export_gee_image(image, aoi, outfile=None, resolution=10,
                     return None
 
 
+def export_gee_vector(collection, outfile=None, file_format='SHP'):
+    """
+    Export an Earth Engine FeatureCollection to a vector file format (SHP, GPKG, or GeoJSON).
+    Args:
+        collection (ee.FeatureCollection): The Earth Engine FeatureCollection to export.
+        outfile (str, optional): The path to the output vector file. If None, returns a GeoDataFrame.
+        file_format (str, optional): The desired output file format ('SHP', 'GPKG', or 'GeoJSON'). Defaults to 'SHP'.   
+
+    Returns:
+        geopandas.GeoDataFrame: If outfile is None, returns a GeoDataFrame containing the exported features.
+    """
+    url = collection.getDownloadURL(
+        filetype='GEO_JSON',
+        filename='vector_data'
+    )
+    response = requests.get(url)
+    geojson_data = response.json()  # or json.loads(response.content)
+    data = gpd.GeoDataFrame.from_features(geojson_data["features"])
+    if data.empty:
+        raise ValueError(
+            "The exported GeoDataFrame is empty. Please check the input collection.")
+    if outfile:
+        if file_format == 'SHP':
+            data.to_file(outfile, driver='ESRI Shapefile')
+        elif file_format == 'GPKG':
+            data.to_file(outfile, driver='GPKG')
+        elif file_format == 'GeoJSON':
+            data.to_file(outfile, driver='GeoJSON')
+        else:
+            raise ValueError(f"Unsupported file format: {file_format}")
+    else:
+        return data
+
+
 def generate_geopandas_from_bbox(bbox, crs="EPSG:4326"):
     """
     Create a GeoDataFrame from a bounding box.
