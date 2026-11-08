@@ -1,4 +1,5 @@
 from datetime import datetime
+from tkinter import N
 from typing import Type
 
 import ee
@@ -1500,53 +1501,167 @@ def load_google_building_data(aoi, start_date='2023', end_date='2024', resolutio
     return building_data
 
 
-def generate_standardized_data(image, lower_percentile=2, upper_percentile=98,
-                               region=None, scale=10, tile_scale=4):
+def _valid_mask(image, nodata=None, mask_nan=True, common_mask=True):
+    """Return a 0/1 mask image: 1 where the pixel is valid."""
+    ok = image.mask()                                   # existing EE mask (clouds etc.)
+    if mask_nan:
+        ok = ok.And(image.eq(image).unmask(0))          # NaN != NaN -> invalid
+    if nodata is not None:
+        ok = ok.And(image.neq(nodata).unmask(0))
+    if common_mask:
+        # valid in ALL bands -> single band
+        ok = ok.reduce(ee.Reducer.min())
+    return ok
+
+
+def generate_mean_std(image, region=None, scale=10, tile_scale=4, crs=None,
+                      lower_percentile=2, upper_percentile=98,
+                      percentile_mode="clamp",
+                      nodata=None, mask_nan=True, common_mask=True,
+                      unweighted=True, max_raw=None, python_dict=True):
     """
-    Generate standardized data for an image by clipping each band to specified percentiles
-    and then standardizing it (subtract mean and divide by std) per band.
+    Mean and std per band over VALID pixels. Percentiles are used only to limit the
+    influence of outliers when computing these statistics.
 
     Args:
-        image (ee.Image): Input image to be standardized.
-        lower_percentile (int, optional): Lower percentile for clipping. Defaults to 2.
-        upper_percentile (int, optional): Upper percentile for clipping. Defaults to 98.
-        region (ee.Geometry, optional): Region over which to compute percentiles and statistics. Defaults to the image geometry.
-        scale (int, optional): Scale in meters for computations. Defaults to 10.
-        tile_scale (int, optional): Tile scale for computations. Defaults to 4.
+        image (ee.Image): Input image (already cloud-masked is fine).
+        region (ee.Geometry, optional): Defaults to the image geometry.
+        scale (int): Scale in meters.
+        tile_scale (int): Tile scale.
+        crs (str, optional): Projection to compute in; match it to your download.
+        lower_percentile, upper_percentile (int): Percentiles used for outlier handling.
+        percentile_mode (str): How outliers are handled when computing mean/std:
+            "clamp": values outside [lo, hi] are set to lo or hi (pixels are kept).
+            "trim":  pixels outside [lo, hi] are excluded from the statistics.
+            "none":  no percentile step, use all valid pixels.
+        nodata (float, optional): Sentinel value treated as invalid (e.g. -9999).
+        mask_nan (bool): Treat NaN/inf pixels as invalid.
+        common_mask (bool): Use only pixels valid in ALL bands.
+        unweighted (bool): Count boundary pixels fully (like numpy).
+        max_raw (int, optional): Raw values kept for percentile computation; set it
+            >= the pixel count for exact percentiles on small regions.
+        python_dict (bool): True -> dict, False -> (mean, std) lists.
 
     Returns:
-        ee.Image: Standardized image with the same bands as the input.
+        dict {"mean","std","bands","lower","upper","n_valid","n_total"} or (mean, std).
+        All values are plain Python objects.
     """
     if not isinstance(image, ee.Image):
         raise TypeError("Input must be an ee.Image")
+    if percentile_mode not in ("clamp", "trim", "none"):
+        raise ValueError("percentile_mode must be 'clamp', 'trim' or 'none'")
+
     lo_p, hi_p = int(lower_percentile), int(upper_percentile)
-    bands = image.bandNames().getInfo()
     if region is None:
         region = image.geometry()
-    # 1) Percentile thresholds per band
-    pct = image.reduceRegion(
-        reducer=ee.Reducer.percentile([lo_p, hi_p]),
-        geometry=region, scale=scale, maxPixels=1e13, tileScale=tile_scale
-    )
 
-    # 2) Clip each band to [lo, hi]
-    def clip_band(b):
+    bands = image.bandNames().getInfo()
+
+    # 1) Validity mask
+    ok = _valid_mask(image, nodata, mask_nan, common_mask)
+    image = image.updateMask(ok)
+
+    def r(reducer):
+        return reducer.unweighted() if unweighted else reducer
+
+    kw = dict(geometry=region, scale=scale, crs=crs,
+              maxPixels=1e13, tileScale=tile_scale)
+
+    # 2) Percentile bounds on valid pixels
+    pct = image.reduceRegion(
+        reducer=r(ee.Reducer.percentile([lo_p, hi_p], maxRaw=max_raw)), **kw)
+
+    # 3) Data used ONLY for computing mean/std
+    def limit_band(b):
         lo = ee.Number(pct.get(f"{b}_p{lo_p}"))
         hi = ee.Number(pct.get(f"{b}_p{hi_p}"))
-        return image.select(b).max(lo).min(hi).rename(b)
+        x = image.select(b)
+        if percentile_mode == "clamp":
+            return x.clamp(lo, hi).rename(b)
+        return x.updateMask(x.gte(lo).And(x.lte(hi))).rename(b)   # trim
 
-    clipped = ee.Image.cat([clip_band(b) for b in bands])
+    stats_img = image if percentile_mode == "none" else \
+        ee.Image.cat([limit_band(b) for b in bands])
 
-    # 3) Mean and std of the clipped data
-    stats = clipped.reduceRegion(
-        reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
-        geometry=region, scale=scale, maxPixels=1e13, tileScale=tile_scale
-    )
+    # 4) Mean, std, count
+    reducer = (ee.Reducer.mean()
+               .combine(ee.Reducer.stdDev(), sharedInputs=True)
+               .combine(ee.Reducer.count(), sharedInputs=True))
+    stats = stats_img.reduceRegion(reducer=r(reducer), **kw)
 
-    # 4) Standardize the clipped data
-    def zscore(b):
-        mu = ee.Number(stats.get(f"{b}_mean"))
-        sd = ee.Number(stats.get(f"{b}_stdDev"))
-        return clipped.select(b).subtract(mu).divide(sd).rename(b)
+    # 5) Total pixels in the region on the same grid
+    total = ee.Image.constant(1).reduceRegion(
+        reducer=ee.Reducer.count().unweighted() if unweighted else ee.Reducer.count(), **kw)
 
-    return ee.Image.cat([zscore(b) for b in bands])
+    out = ee.Dictionary({"stats": stats, "pct": pct, "total": total}).getInfo()
+    stats, pct, total = out["stats"], out["pct"], out["total"]
+
+    missing = [b for b in bands if stats.get(f"{b}_mean") is None]
+    if missing:
+        raise ValueError(f"No valid pixels in region for bands: {missing}")
+
+    mean = [stats[f"{b}_mean"] for b in bands]
+    std = [max(stats[f"{b}_stdDev"], 1e-12) for b in bands]
+    n_valid = [int(stats[f"{b}_count"]) for b in bands]
+    lower = [pct[f"{b}_p{lo_p}"] for b in bands]
+    upper = [pct[f"{b}_p{hi_p}"] for b in bands]
+    n_total = int(list(total.values())[0])
+
+    if len(set(n_valid)) > 1:
+        print(f"Warning: per-band pixel counts differ: {n_valid}")
+
+    if python_dict:
+        return {"mean": mean, "std": std, "bands": bands,
+                "lower": lower, "upper": upper,
+                "n_valid": n_valid, "n_total": n_total}
+    return mean, std
+
+
+def generate_standardized_data(image, vmean=None, std=None, region=None,
+                               scale=10, tile_scale=4, crs=None,
+                               lower_percentile=2, upper_percentile=98,
+                               percentile_mode="clamp",
+                               nodata=None, mask_nan=True, common_mask=True,
+                               unweighted=True, fill_value=None):
+    """
+    Standardize the ORIGINAL (unclipped) data: (x - mean) / std, per band.
+
+    vmean and std are lists (one value per band, in image.bandNames() order),
+    typically from generate_mean_std. If both are None, they are computed from
+    this image over `region` with generate_mean_std (percentiles are used only
+    for those statistics, never to clip the output).
+
+    The image's own mask is kept: masked pixels stay masked. Set `fill_value`
+    (e.g. -9999) to fill them, for instance before downloading.
+    """
+    if not isinstance(image, ee.Image):
+        raise TypeError("Input must be an ee.Image")
+    if (vmean is None) != (std is None):
+        raise ValueError("Provide both vmean and std, or neither.")
+
+    bands = image.bandNames().getInfo()
+
+    if vmean is None:
+        vmean, std = generate_mean_std(
+            image, region=region, scale=scale, tile_scale=tile_scale, crs=crs,
+            lower_percentile=lower_percentile, upper_percentile=upper_percentile,
+            percentile_mode=percentile_mode, nodata=nodata, mask_nan=mask_nan,
+            common_mask=common_mask, unweighted=unweighted, python_dict=False)
+
+    else:
+        for name, v in (("vmean", vmean), ("std", std)):
+            if not isinstance(v, (list, tuple)) or len(v) != len(bands):
+                raise ValueError(f"{name} must be a list of {len(bands)} values "
+                                 f"matching bands: {bands}")
+
+    # Standardize original values (no clamp)
+    out = []
+    for i, b in enumerate(bands):
+        x = (image.select(b)
+             .subtract(float(vmean[i]))
+             .divide(max(float(std[i]), 1e-12))
+             .rename(b))
+        out.append(x)
+    result = ee.Image.cat(out)
+
+    return result.unmask(fill_value) if fill_value is not None else result
