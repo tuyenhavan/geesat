@@ -1624,15 +1624,27 @@ def generate_standardized_data(image, vmean=None, std=None, region=None,
                                nodata=None, mask_nan=True, common_mask=True,
                                unweighted=True, fill_value=None):
     """
-    Standardize the ORIGINAL (unclipped) data: (x - mean) / std, per band.
+    Standardize the original (unclipped) data: (x - mean) / std, per band.
 
-    vmean and std are lists (one value per band, in image.bandNames() order),
-    typically from generate_mean_std. If both are None, they are computed from
-    this image over `region` with generate_mean_std (percentiles are used only
-    for those statistics, never to clip the output).
+    Args:
+        image (ee.Image): Input image to standardize.
+        vmean (list, optional): Per-band mean values. If None, computed from the image.
+        std (list, optional): Per-band standard deviation values. If None, computed from the image.
+        region (ee.Geometry, optional): Region over which to compute statistics if vmean and std are not provided.
+        scale (int, optional): Scale in meters for the computation.
+        tile_scale (int, optional): Tile scale for the computation.
+        crs (str, optional): Coordinate reference system for the computation.
+        lower_percentile (float, optional): Lower percentile for statistics computation.
+        upper_percentile (float, optional): Upper percentile for statistics computation.
+        percentile_mode (str, optional): Mode for percentile computation.
+        nodata (float, optional): No-data value for the computation.
+        mask_nan (bool, optional): Whether to mask NaN values.
+        common_mask (bool, optional): Whether to use a common mask for all bands.
+        unweighted (bool, optional): Whether to use unweighted statistics.
+        fill_value (float, optional): Value to fill masked pixels with.
 
-    The image's own mask is kept: masked pixels stay masked. Set `fill_value`
-    (e.g. -9999) to fill them, for instance before downloading.
+    Returns:
+        ee.Image: Standardized image with the same bands as the input.
     """
     if not isinstance(image, ee.Image):
         raise TypeError("Input must be an ee.Image")
@@ -1667,25 +1679,29 @@ def generate_standardized_data(image, vmean=None, std=None, region=None,
     return result.unmask(fill_value) if fill_value is not None else result
 
 
-def generate_hls_data(roi,
-                      start_date='2020-01-01',
-                      end_date='2020-12-31',
-                      cloud_filter=40,
-                      mask_cirrus=True,
-                      mask_high_aerosol=True,
-                      buffer_m=0,
-                      sensors=('S2', 'L8')):
+def generate_hls_cloud_mask(aoi,
+                            start_date='2020-01-01',
+                            end_date='2020-12-31',
+                            cloud_filter=40,
+                            mask_cirrus=True,
+                            mask_high_aerosol=True,
+                            buffer_m=0,
+                            sensors=('S2', 'L8')):
     """
-    HLS v2.0 (30 m) with Fmask cloud masking. Output bands depend on `sensors`:
+    Generate an HLS image collection with cloud masking applied.
 
-        ('S2',)       -> BLUE, GREEN, RED, RE1, RE2, RE3, NIR_BROAD, NIR, SWIR1, SWIR2
-                         (all Sentinel-2 bands except B1, B9, B10)
-        ('L8',)       -> BLUE, GREEN, RED, NIR, SWIR1, SWIR2
-                         (Landsat optical bands except coastal aerosol B1 and cirrus B9)
-        ('S2', 'L8')  -> common bands only: BLUE, GREEN, RED, NIR, SWIR1, SWIR2
+    Args:
+        aoi (ee.Geometry, ee.Feature, ee.FeatureCollection): Area of interest for the HLS image collection.
+        start_date (str): Start date for the image collection in 'YYYY-MM-DD' format.
+        end_date (str): End date for the image collection in 'YYYY-MM-DD' format.
+        cloud_filter (int): Maximum allowed cloud coverage percentage for images.
+        mask_cirrus (bool): Whether to mask cirrus clouds.
+        mask_high_aerosol (bool): Whether to mask high aerosol areas.
+        buffer_m (int): Buffer distance in meters for cloud masking.
+        sensors (tuple): Tuple of sensors to include ('S2', 'L8').
 
-    NIR is the narrow NIR (S2 B8A / Landsat B5); NIR_BROAD is S2 B8.
-    Reflectance is 0-1. A 'sensor' property is set on every image.
+    Returns:
+        ee.ImageCollection: HLS image collection with cloud masking applied.
     """
     if isinstance(sensors, str):
         sensors = (sensors.strip().upper(),)
@@ -1727,7 +1743,7 @@ def generate_hls_data(roi,
     def _build(sensor):
         asset, bands_in, names_in = CONFIG[sensor]
         col = (ee.ImageCollection(asset)
-               .filterBounds(roi)
+               .filterBounds(aoi)
                .filterDate(start_date, end_date))
         if cloud_filter is not None:
             col = col.filter(ee.Filter.lt('CLOUD_COVERAGE', cloud_filter))
