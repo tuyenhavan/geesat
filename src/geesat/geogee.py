@@ -1665,3 +1665,84 @@ def generate_standardized_data(image, vmean=None, std=None, region=None,
     result = ee.Image.cat(out)
 
     return result.unmask(fill_value) if fill_value is not None else result
+
+
+def generate_hls_data(roi,
+                      start_date='2020-01-01',
+                      end_date='2020-12-31',
+                      cloud_filter=40,
+                      mask_cirrus=True,
+                      mask_high_aerosol=True,
+                      buffer_m=0,
+                      sensors=('S2', 'L8')):
+    """
+    HLS v2.0 (30 m) with Fmask cloud masking. Output bands depend on `sensors`:
+
+        ('S2',)       -> BLUE, GREEN, RED, RE1, RE2, RE3, NIR_BROAD, NIR, SWIR1, SWIR2
+                         (all Sentinel-2 bands except B1, B9, B10)
+        ('L8',)       -> BLUE, GREEN, RED, NIR, SWIR1, SWIR2
+                         (Landsat optical bands except coastal aerosol B1 and cirrus B9)
+        ('S2', 'L8')  -> common bands only: BLUE, GREEN, RED, NIR, SWIR1, SWIR2
+
+    NIR is the narrow NIR (S2 B8A / Landsat B5); NIR_BROAD is S2 B8.
+    Reflectance is 0-1. A 'sensor' property is set on every image.
+    """
+    if isinstance(sensors, str):
+        sensors = (sensors.strip().upper(),)
+    sensors = tuple(sensors)
+    if not sensors or not set(sensors) <= {'S2', 'L8'}:
+        raise ValueError("sensors must be a non-empty subset of ('S2', 'L8')")
+
+    # (asset, input bands, output names)
+    CONFIG = {
+        'S2': ('NASA/HLS/HLSS30/v002',
+               ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
+               ['BLUE', 'GREEN', 'RED', 'RE1', 'RE2', 'RE3',
+                'NIR_BROAD', 'NIR', 'SWIR1', 'SWIR2']),
+        'L8': ('NASA/HLS/HLSL30/v002',
+               ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'],
+               ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']),
+    }
+
+    # Both sensors -> restrict each to the shared band names, in a fixed order
+    if len(set(sensors)) == 2:
+        common = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+    else:
+        common = None
+
+    def _mask(img):
+        f = img.select('Fmask')
+        bad = (f.bitwiseAnd(1 << 1)                  # cloud
+               .Or(f.bitwiseAnd(1 << 2))             # adjacent to cloud/shadow
+               .Or(f.bitwiseAnd(1 << 3)))            # cloud shadow
+        if mask_cirrus:
+            bad = bad.Or(f.bitwiseAnd(1 << 0))       # cirrus
+        if mask_high_aerosol:
+            bad = bad.Or(f.rightShift(6).bitwiseAnd(3).eq(3))   # high aerosol
+        bad = bad.gt(0)
+        if buffer_m > 0:
+            bad = bad.focalMax(buffer_m, 'circle', 'meters')
+        return img.updateMask(bad.Not())
+
+    def _build(sensor):
+        asset, bands_in, names_in = CONFIG[sensor]
+        col = (ee.ImageCollection(asset)
+               .filterBounds(roi)
+               .filterDate(start_date, end_date))
+        if cloud_filter is not None:
+            col = col.filter(ee.Filter.lt('CLOUD_COVERAGE', cloud_filter))
+
+        def _prep(img):
+            out = _mask(img).select(bands_in, names_in).toFloat()
+            if common is not None:
+                out = out.select(common)             # same bands, same order
+            return (out.copyProperties(img, ['system:time_start'])
+                       .set('sensor', sensor))
+        return col.map(_prep)
+
+    # keeps order, drops duplicates
+    cols = [_build(s) for s in dict.fromkeys(sensors)]
+    out = cols[0]
+    for c in cols[1:]:
+        out = out.merge(c)
+    return out.sort('system:time_start')

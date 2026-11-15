@@ -182,7 +182,8 @@ def slope_correction(collection, model="volume", buffer=50):
         sigma0_pow = ee.Image.constant(10).pow(image.divide(10.0))
 
         # Radar geometry
-        theta_i_rad = image.select("angle").multiply(math.pi / 180.0).clip(geom)
+        theta_i_rad = image.select("angle").multiply(
+            math.pi / 180.0).clip(geom)
 
         phi_i_rad = ee.Image.constant(heading).multiply(math.pi / 180.0)
 
@@ -233,7 +234,8 @@ def slope_correction(collection, model="volume", buffer=50):
         # Back to dB
         sar_bands = image.bandNames().remove("angle")
         gamma0_flat_db = (
-            ee.Image.constant(10).multiply(gamma0_flat.log10()).select(sar_bands)
+            ee.Image.constant(10).multiply(
+                gamma0_flat.log10()).select(sar_bands)
         )
 
         # Layover / shadow mask
@@ -276,8 +278,10 @@ def leefilter(image, kernel_size=7):
         kernel=ee.Kernel.square(kernel_size / 2, "pixels"),
         optimization="window",
     )
-    mean_band = band_names.map(lambda bandName: ee.String(bandName).cat("_mean"))
-    var_band = band_names.map(lambda bandName: ee.String(bandName).cat("_variance"))
+    mean_band = band_names.map(
+        lambda bandName: ee.String(bandName).cat("_mean"))
+    var_band = band_names.map(
+        lambda bandName: ee.String(bandName).cat("_variance"))
 
     z_bar = stats.select(mean_band)
     varz = stats.select(var_band)
@@ -298,7 +302,7 @@ def leefilter(image, kernel_size=7):
     return image.addBands(output, None, True)
 
 
-def prepare_sentinel1_collection(
+def generate_sen1data(
     roi,
     orbit_pass="ASCENDING",
     start_date="2022-01-01",
@@ -374,7 +378,7 @@ def generate_water_occurrence(
     if polarization not in ["VV", "VH"]:
         raise ValueError("polarization must be either 'VV' or 'VH'")
     if collection is None:
-        collection = prepare_sentinel1_collection(
+        collection = generate_sen1data(
             roi,
             start_date=start_date,
             end_date=end_date,
@@ -405,7 +409,8 @@ def generate_water_occurrence(
         collection, aggregate_method="median"
     )
     water_mask = (
-        collection.map(lambda img: img.select(polarization).lt(water_threshold))
+        collection.map(lambda img: img.select(
+            polarization).lt(water_threshold))
         .sum()
         .divide(collection.size())
         .multiply(100)
